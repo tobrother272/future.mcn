@@ -59,7 +59,7 @@ export interface CmsApiKeyCreated extends CmsApiKey {
 
 export interface Topic {
   id: string;
-  cms_id: string | null;
+  cms_id?: string | null;
   name: string;
   dept: string | null;
   expected_channels: number;

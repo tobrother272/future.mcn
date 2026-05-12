@@ -1,4 +1,4 @@
-﻿import { useState, useRef } from "react";
+import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -6,7 +6,7 @@ import { z } from "zod";
 import {
   Users, Plus, Search, Building2, CheckCircle, Clock, XCircle,
   Phone, Mail, Percent, ChevronDown, ChevronRight as ChevronRightIcon,
-  GripVertical, Link2, ArrowLeftRight, Pencil, Youtube,
+  GripVertical, Link2, Pencil, Youtube,
 } from "lucide-react";
 import { C } from "@/styles/theme";
 import { Button, Card, Pill, Input, Modal, Field, Select, EmptyState } from "@/components/ui";
@@ -15,7 +15,7 @@ import {
   useApprovePartnerUser, useRejectPartnerUser, useSetPartnerParent,
 } from "@/api/partners.api";
 import { useToast } from "@/stores/notificationStore";
-import { fmtDate } from "@/lib/format";
+import { fmtDate, fmtCurrency } from "@/lib/format";
 import type { Partner, PartnerType, PartnerTier } from "@/types/partner";
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -62,7 +62,7 @@ interface DragState { draggingId: string | null; overId: string | null }
 
 function PartnerRow({
   partner, isChild = false, hasChildren = false, expanded, onToggle,
-  dragState, onDragStart, onDragOver, onDragEnd, onDrop, onTransfer,
+  dragState, onDragStart, onDragOver, onDragEnd, onDrop,
   onClick, onEdit,
 }: {
   partner: Partner;
@@ -75,7 +75,6 @@ function PartnerRow({
   onDragOver:  (id: string) => void;
   onDragEnd:   () => void;
   onDrop:      (targetId: string) => void;
-  onTransfer:  (p: Partner) => void;
   onClick:     () => void;
   onEdit:      (p: Partner) => void;
 }) {
@@ -177,6 +176,17 @@ function PartnerRow({
         )}
       </div>
 
+      {/* Revenue — tổng monthly_revenue tất cả kênh */}
+      <div style={{ minWidth: 100, textAlign: "right" }}>
+        {(partner.total_revenue ?? 0) > 0 ? (
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.green, fontFamily: "monospace" }}>
+            {fmtCurrency(partner.total_revenue ?? 0)}
+          </span>
+        ) : (
+          <span style={{ fontSize: 11, color: C.textMuted }}>—</span>
+        )}
+      </div>
+
       {/* Date */}
       <div style={{ fontSize: 11, color: C.textMuted, minWidth: 80, textAlign: "right" }}>
         {fmtDate(partner.created_at)}
@@ -196,21 +206,6 @@ function PartnerRow({
         <Pencil size={13} />
       </button>
 
-      {/* Transfer button (only for children) */}
-      {isChild && (
-        <button
-          title="Chuyển sang cha khác"
-          onClick={(e) => { e.stopPropagation(); onTransfer(partner); }}
-          style={{
-            background: "none", border: "none", cursor: "pointer",
-            color: C.textMuted, padding: "2px 4px", borderRadius: 4,
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = C.cyan)}
-          onMouseLeave={(e) => (e.currentTarget.style.color = C.textMuted)}
-        >
-          <ArrowLeftRight size={13} />
-        </button>
-      )}
     </div>
   );
 }
@@ -685,7 +680,7 @@ export default function PartnerWorkflowPage() {
       {/* Drag hint */}
       <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
         <GripVertical size={11} />
-        Kéo đối tác thả vào cha để phân cấp · Nhấn <ArrowLeftRight size={10} style={{ display:"inline",margin:"0 2px" }} /> để chuyển sang cha khác
+        Kéo đối tác thả vào cha để phân cấp
       </div>
 
       {/* Tree List */}
@@ -699,6 +694,7 @@ export default function PartnerWorkflowPage() {
           <div style={{ minWidth: 160, fontSize: 11, fontWeight: 600, color: C.textMuted }}>LIÊN HỆ</div>
           <div style={{ minWidth: 48, fontSize: 11, fontWeight: 600, color: C.textMuted }}>SHARE</div>
           <div style={{ minWidth: 64, fontSize: 11, fontWeight: 600, color: C.textMuted, textAlign: "center" }}>KÊNH</div>
+          <div style={{ minWidth: 100, fontSize: 11, fontWeight: 600, color: C.textMuted, textAlign: "right" }}>DOANH THU</div>
           <div style={{ minWidth: 80, fontSize: 11, fontWeight: 600, color: C.textMuted, textAlign: "right" }}>NGÀY TẠO</div>
           <div style={{ width: 16 }} />
         </div>
@@ -725,7 +721,6 @@ export default function PartnerWorkflowPage() {
                 onDragOver={handleDragOver}
                 onDragEnd={handleDragEnd}
                 onDrop={handleDrop}
-                onTransfer={setTransferringPartner}
                 onClick={() => navigate(`/partners/${root.id}`)}
                 onEdit={setEditingPartner}
               />
@@ -742,7 +737,6 @@ export default function PartnerWorkflowPage() {
                     onDragOver={handleDragOver}
                     onDragEnd={handleDragEnd}
                     onDrop={handleDrop}
-                    onTransfer={setTransferringPartner}
                     onClick={() => navigate(`/partners/${child.id}`)}
                     onEdit={setEditingPartner}
                   />
@@ -757,13 +751,6 @@ export default function PartnerWorkflowPage() {
       <CreatePartnerModal open={showCreate} onClose={() => setShowCreate(false)} />
       {editingPartner && (
         <EditPartnerModal partner={editingPartner} onClose={() => setEditingPartner(null)} />
-      )}
-      {transferringPartner && (
-        <TransferParentModal
-          child={transferringPartner}
-          roots={allPartners.filter((p) => !p.parent_id)}
-          onClose={() => setTransferringPartner(null)}
-        />
       )}
     </div>
   );

@@ -9,9 +9,11 @@ type ModalProps = {
   children: ReactNode;
   width?: number | string;
   footer?: ReactNode;
+  /** Cho phép click ra ngoài để đóng modal. Mặc định true. */
+  closeOnOverlay?: boolean;
 };
 
-export function Modal({ open, onClose, title, children, width = 600, footer }: ModalProps) {
+export function Modal({ open, onClose, title, children, width = 600, footer, closeOnOverlay = true }: ModalProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     if (open) document.addEventListener("keydown", handler);
@@ -22,7 +24,7 @@ export function Modal({ open, onClose, title, children, width = 600, footer }: M
 
   return (
     <div
-      onClick={onClose}
+      onClick={closeOnOverlay ? onClose : undefined}
       style={{
         position: "fixed", inset: 0, zIndex: 1000,
         background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",

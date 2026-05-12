@@ -1,4 +1,4 @@
-﻿import { useState, useRef } from "react";
+import { useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ChevronLeft, Upload, CheckCircle } from "lucide-react";
 import {
@@ -174,6 +174,8 @@ function ImportRevenueModal({ open, onClose, cmsId }: { open: boolean; onClose: 
 
 const PERIOD_OPTIONS = [{ label: "30 ngày", days: 30 }, { label: "90 ngày", days: 90 }, { label: "365 ngày", days: 365 }];
 
+type RevRow = { snapshot_date: string; revenue: number; views: number; engaged_views?: number; watch_time_hours?: number };
+
 export default function CmsHistoryPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -181,16 +183,21 @@ export default function CmsHistoryPage() {
   const [importOpen, setImportOpen] = useState(false);
 
   const { data: cms } = useCms(id!);
-  const { data: history, isLoading } = useCmsRevenue(id!, days);
+  const { data: rawHistory, isLoading } = useCmsRevenue(id!, days);
+  const history = (rawHistory ?? []) as RevRow[];
 
-  const chartData = (history ?? []).map((r) => ({
+  const chartData = history.map((r) => ({
     date: fmtDate(r.snapshot_date),
     revenue: Number(r.revenue),
     views: Number(r.views),
+    engaged_views: Number(r.engaged_views ?? 0),
+    watch_time_hours: Number(r.watch_time_hours ?? 0),
   }));
 
-  const totalRevenue = (history ?? []).reduce((s, r) => s + Number(r.revenue), 0);
-  const totalViews   = (history ?? []).reduce((s, r) => s + Number(r.views), 0);
+  const totalRevenue      = history.reduce((s, r) => s + Number(r.revenue), 0);
+  const totalViews        = history.reduce((s, r) => s + Number(r.views), 0);
+  const totalWatchTime    = history.reduce((s, r) => s + Number(r.watch_time_hours ?? 0), 0);
+  const hasAnalytics      = history.some((r) => (r.engaged_views ?? 0) > 0 || (r.watch_time_hours ?? 0) > 0);
 
   return (
     <div style={{ padding: 24 }}>
@@ -215,7 +222,7 @@ export default function CmsHistoryPage() {
       <ImportRevenueModal open={importOpen} onClose={() => setImportOpen(false)} cmsId={id!} />
 
       {/* Summary KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
         <Card padding="16px">
           <div style={{ fontSize: 11, color: C.textMuted }}>Tổng doanh thu</div>
           <div style={{ fontSize: 22, fontWeight: 700, color: C.amber, marginTop: 4 }}>
@@ -226,9 +233,15 @@ export default function CmsHistoryPage() {
           <div style={{ fontSize: 11, color: C.textMuted }}>Tổng lượt xem</div>
           <div style={{ fontSize: 22, fontWeight: 700, color: C.blue, marginTop: 4 }}>{fmt(totalViews)}</div>
         </Card>
+        {hasAnalytics && (
+          <Card padding="16px">
+            <div style={{ fontSize: 11, color: C.textMuted }}>Watch Time (giờ)</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: C.cyan, marginTop: 4 }}>{fmt(Math.round(totalWatchTime))}</div>
+          </Card>
+        )}
         <Card padding="16px">
           <div style={{ fontSize: 11, color: C.textMuted }}>Số ngày</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: C.text, marginTop: 4 }}>{history?.length ?? 0}</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: C.text, marginTop: 4 }}>{history.length}</div>
         </Card>
       </div>
 
@@ -237,19 +250,29 @@ export default function CmsHistoryPage() {
         <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 16 }}>Doanh thu theo ngày</div>
         {isLoading ? (
           <div style={{ height: 280, display: "flex", alignItems: "center", justifyContent: "center", color: C.textSub }}>Đang tải...</div>
+        ) : chartData.length === 0 ? (
+          <div style={{ height: 280, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.textMuted, gap: 8 }}>
+            <div style={{ fontSize: 14 }}>Chưa có dữ liệu analytics</div>
+            <div style={{ fontSize: 12 }}>Dữ liệu sẽ xuất hiện sau khi sync qua Public API</div>
+          </div>
         ) : (
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={chartData} margin={{ top: 5, right: 40, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: C.textMuted }} tickLine={false} />
               <YAxis yAxisId="left"  tick={{ fontSize: 10, fill: C.textMuted }} tickLine={false}
-                tickFormatter={(v: number) => `$${(v/1000).toFixed(0)}K`} />
+                tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
               <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: C.textMuted }} tickLine={false}
                 tickFormatter={(v: number) => `${(v/1_000_000).toFixed(1)}M`} />
-              <Tooltip contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
+              <Tooltip contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                formatter={(value: number, name: string) => {
+                  if (name === "Revenue ($)") return [`$${value.toFixed(3)}`, name];
+                  return [fmt(value), name];
+                }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Line yAxisId="left"  type="monotone" dataKey="revenue" stroke={C.amber} strokeWidth={2} dot={false} name="Revenue ($)" />
               <Line yAxisId="right" type="monotone" dataKey="views"   stroke={C.blue}  strokeWidth={2} dot={false} name="Views" />
+              {hasAnalytics && <Line yAxisId="right" type="monotone" dataKey="engaged_views" stroke={C.cyan} strokeWidth={1.5} dot={false} name="Engaged Views" strokeDasharray="4 2" />}
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -260,25 +283,37 @@ export default function CmsHistoryPage() {
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, fontSize: 13, fontWeight: 600, color: C.text }}>
           Chi tiết theo ngày
         </div>
-        <div style={{ maxHeight: 360, overflowY: "auto" }}>
+        <div style={{ maxHeight: 420, overflowY: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead style={{ position: "sticky", top: 0, background: C.bgHover }}>
               <tr>
-                {["Ngày", "Revenue", "Views"].map((h) => (
+                {[
+                  "Ngày", "Revenue", "Views",
+                  ...(hasAnalytics ? ["Engaged Views", "Watch Time (h)"] : []),
+                ].map((h) => (
                   <th key={h} style={{ padding: "8px 16px", textAlign: "left", fontSize: 11, color: C.textMuted, fontWeight: 600 }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {[...(history ?? [])].reverse().map((r) => (
+              {[...history].reverse().map((r) => (
                 <tr key={r.snapshot_date} style={{ borderTop: `1px solid ${C.border}` }}>
                   <td style={{ padding: "7px 16px", color: C.textSub }}>{fmtDate(r.snapshot_date)}</td>
                   <td style={{ padding: "7px 16px", color: C.amber, fontWeight: 600 }}>{fmtCurrency(Number(r.revenue), cms?.currency)}</td>
                   <td style={{ padding: "7px 16px", color: C.text }}>{fmt(Number(r.views))}</td>
+                  {hasAnalytics && <>
+                    <td style={{ padding: "7px 16px", color: C.cyan }}>{fmt(Number(r.engaged_views ?? 0))}</td>
+                    <td style={{ padding: "7px 16px", color: C.textSub }}>{Number(r.watch_time_hours ?? 0).toFixed(1)}</td>
+                  </>}
                 </tr>
               ))}
             </tbody>
           </table>
+          {history.length === 0 && !isLoading && (
+            <div style={{ padding: "24px 16px", textAlign: "center", color: C.textMuted, fontSize: 13 }}>
+              Chưa có dữ liệu trong khoảng thời gian này
+            </div>
+          )}
         </div>
       </Card>
     </div>

@@ -167,7 +167,24 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
-# 6. Smoke test
+# 6. Apply DB migrations (idempotent — safe to run on every release)
+step "Apply DB migrations"
+MIGRATIONS_DIR="$NEW_RELEASE/backend/migrations"
+if [[ -d "$MIGRATIONS_DIR" ]]; then
+  for sql_file in "$MIGRATIONS_DIR"/*.sql; do
+    [[ -f "$sql_file" ]] || continue
+    fname="$(basename "$sql_file")"
+    docker cp "$sql_file" meridian-postgres:/tmp/"$fname"
+    docker exec meridian-postgres psql -U meridian -d meridian \
+      -v ON_ERROR_STOP=0 -f /tmp/"$fname" 2>&1 \
+      | grep -v "^$" | sed "s/^/    [$fname] /" || true
+    ok "$fname applied"
+  done
+else
+  warn "no migrations directory found, skipping"
+fi
+
+# 7. Smoke test
 step "Smoke test"
 hc="$(curl -fsS --max-time 5 http://127.0.0.1:4010/api/health || echo '')"
 echo "    backend /api/health -> $hc"

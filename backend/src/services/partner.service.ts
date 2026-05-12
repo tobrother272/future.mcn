@@ -41,13 +41,18 @@ export const PartnerService = {
     const countRes = await queryOne<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM partner p LEFT JOIN partner pp ON p.parent_id = pp.id ${where}`, vals
     );
-    const rows = await queryMany<Partner & { parent_name: string | null; channel_count: number }>(
+    const rows = await queryMany<Partner & { parent_name: string | null; channel_count: number; total_revenue: number }>(
       `SELECT p.*, pp.name AS parent_name,
-              COALESCE(ch.cnt, 0)::int AS channel_count
+              COALESCE(ch.cnt,  0)::int     AS channel_count,
+              COALESCE(ch.rev,  0)::float8  AS total_revenue
        FROM partner p
        LEFT JOIN partner pp ON p.parent_id = pp.id
        LEFT JOIN (
-         SELECT partner_id, COUNT(*)::int AS cnt FROM channel GROUP BY partner_id
+         SELECT partner_id,
+                COUNT(*)::int            AS cnt,
+                SUM(monthly_revenue)     AS rev
+         FROM channel
+         GROUP BY partner_id
        ) ch ON ch.partner_id = p.id
        ${where} ORDER BY p.name ASC LIMIT $${idx} OFFSET $${idx+1}`,
       [...vals, pageLimit, offset]

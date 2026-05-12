@@ -78,9 +78,9 @@ export const CmsService = {
          COUNT(c.id) FILTER (WHERE c.monetization='On')::int                     AS monetized,
          COUNT(c.id) FILTER (WHERE c.monetization='Off')::int                    AS demonetized,
          COUNT(c.id) FILTER (WHERE c.health='Critical')::int                     AS critical_channels,
-         COALESCE(SUM(c.monthly_revenue),0)                                      AS total_monthly_revenue,
-         COALESCE(SUM(c.subscribers),0)::bigint                                  AS total_subscribers,
-         COALESCE(SUM(c.monthly_views),0)::bigint                                AS total_monthly_views,
+         COALESCE(SUM(c.monthly_revenue),0)::float8                               AS total_monthly_revenue,
+         COALESCE(SUM(c.subscribers),0)::float8                                  AS total_subscribers,
+         COALESCE(SUM(c.monthly_views),0)::float8                                AS total_monthly_views,
          COUNT(DISTINCT c.partner_id) FILTER (WHERE c.partner_id IS NOT NULL)::int AS partner_count
        FROM channel c JOIN cms cm ON c.cms_id = cm.id
        WHERE c.cms_id = $1
@@ -96,8 +96,27 @@ export const CmsService = {
 
   async getRevenue(id: string, days = 30) {
     await CmsService.getById(id);
+    // Aggregate from channel_analytics for all channels in this CMS
+    const rows = await queryMany<{ snapshot_date: string; revenue: number; views: number; engaged_views: number; watch_time_hours: number }>(
+      `SELECT
+         ca.date                       AS snapshot_date,
+         SUM(ca.revenue)::float8       AS revenue,
+         SUM(ca.views)::float8         AS views,
+         SUM(ca.engaged_views)::float8 AS engaged_views,
+         SUM(ca.watch_time_hours)::float8 AS watch_time_hours
+       FROM channel_analytics ca
+       WHERE ca.cms_id = $1
+         AND ca.date >= CURRENT_DATE - ($2::int)
+       GROUP BY ca.date
+       ORDER BY ca.date ASC`,
+      [id, days]
+    );
+    // Fall back to legacy revenue_daily if no channel_analytics data
+    if (rows.length > 0) return rows;
     return queryMany(
-      `SELECT * FROM revenue_daily
+      `SELECT snapshot_date, revenue::float8 AS revenue, views::float8 AS views,
+              0::float8 AS engaged_views, 0::float8 AS watch_time_hours
+       FROM revenue_daily
        WHERE scope = 'cms' AND scope_id = $1
          AND snapshot_date >= CURRENT_DATE - ($2::int)
        ORDER BY snapshot_date ASC`,
@@ -142,24 +161,22 @@ export const CmsService = {
     return { items: rows, total: Number(countRes?.count ?? 0), page: params.page ?? 1, limit: pageLimit };
   },
 
-  async getTopics(id: string) {
-    await CmsService.getById(id);
+  /** Returns ALL global topics (cms_id is no longer used as filter). */
+  async getTopics(_id?: string) {
     return queryMany<Topic & { channel_count: number }>(
       `SELECT t.*, COALESCE(ch.cnt, 0)::int AS channel_count
        FROM topic t
        LEFT JOIN (SELECT topic_id, COUNT(*)::int AS cnt FROM channel GROUP BY topic_id) ch
              ON ch.topic_id = t.id
-       WHERE t.cms_id = $1 ORDER BY t.name`,
-      [id]
+       ORDER BY t.name`
     );
   },
 
-  async createTopic(cmsId: string, data: { name: string; dept?: string; expected_channels?: number }) {
-    await CmsService.getById(cmsId);
+  async createTopic(_cmsId: string, data: { name: string; dept?: string; expected_channels?: number }) {
     const id = nanoid("T");
     return queryOne<Topic>(
-      `INSERT INTO topic (id, cms_id, name, dept, expected_channels) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [id, cmsId, data.name, data.dept ?? null, data.expected_channels ?? 0]
+      `INSERT INTO topic (id, name, dept, expected_channels) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [id, data.name, data.dept ?? null, data.expected_channels ?? 0]
     );
   },
 };

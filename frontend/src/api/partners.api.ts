@@ -20,6 +20,18 @@ export function usePartner(id: string) {
   });
 }
 
+export function usePartnerRevenue(id: string, days = 30) {
+  return useQuery({
+    queryKey: ["partners", id, "revenue", days],
+    queryFn: () =>
+      apiClient
+        .get(`partners/${id}/revenue`, { searchParams: { days } })
+        .json<Array<{ snapshot_date: string; revenue: number; views: number; engaged_views: number; watch_time_hours: number }>>(),
+    enabled: !!id,
+    staleTime: 60_000,
+  });
+}
+
 export function usePartnerProfile(id: string) {
   return useQuery({
     queryKey: ["partners", id, "profile"],

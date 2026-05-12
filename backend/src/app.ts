@@ -21,6 +21,7 @@ import { notificationsRouter }from "./routes/notifications.routes.js";
 import { auditRouter }        from "./routes/audit.routes.js";
 import { policiesRouter }     from "./routes/policies.routes.js";
 import { settingsRouter }     from "./routes/settings.routes.js";
+import { topicsRouter }       from "./routes/topics.routes.js";
 import { publicRouter }       from "./routes/public.routes.js";
 import { startDailySnapshotJob } from "./jobs/daily-snapshot.job.js";
 
@@ -86,6 +87,7 @@ export function createApp() {
   app.use("/api/audit",       auditRouter);
   app.use("/api/policies",    policiesRouter);
   app.use("/api/settings",    settingsRouter);
+  app.use("/api/topics",      topicsRouter);
 
   // ── Network info endpoint ─────────────────────────────────
   app.get("/api/network-info", (_req, res) => {

@@ -92,9 +92,15 @@ router.post("/", validate(createSchema), async (req, res, next) => {
   try { res.status(201).json(await CmsService.create(req.body)); } catch(e) { next(e); }
 });
 
-router.post("/:id/topics", async (req, res, next) => {
+const createTopicSchema = z.object({
+  name:              z.string().min(1).max(100),
+  dept:              z.string().optional(),
+  expected_channels: z.coerce.number().int().min(0).optional(),
+});
+
+router.post("/:id/topics", validate(createTopicSchema), async (req, res, next) => {
   try {
-    const t = await CmsService.createTopic(req.params.id, req.body);
+    const t = await CmsService.createTopic(req.params.id!, req.body);
     res.status(201).json(t);
   } catch(e) { next(e); }
 });

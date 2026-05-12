@@ -91,7 +91,7 @@ function EmployeeForm({
   const errStyle: React.CSSProperties  = { fontSize: 11, color: C.red, marginTop: 3 };
 
   return (
-    <Modal open onClose={onClose} title={isEdit ? `Sửa: ${employee.name}` : "Thêm nhân viên mới"} width={520}
+    <Modal open onClose={onClose} title={isEdit ? `Sửa: ${employee.name}` : "Thêm nhân viên mới"} width={520} closeOnOverlay={false}
       footer={
         <>
           <Button variant="ghost" size="sm" onClick={onClose}>Hủy</Button>

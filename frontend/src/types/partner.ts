@@ -19,6 +19,7 @@ export interface Partner {
   parent_id?: string | null;
   parent_name?: string | null;
   channel_count?: number;
+  total_revenue?: number;
   children?: Partner[];
   created_at: string;
   updated_at: string;

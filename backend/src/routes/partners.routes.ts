@@ -53,9 +53,43 @@ router.get("/:id/channels", async (req, res, next) => {
   try {
     const { queryMany } = await import("../db/helpers.js");
     const rows = await queryMany(
-      `SELECT c.*, cm.name AS cms_name FROM channel c
-       LEFT JOIN cms cm ON c.cms_id = cm.id
-       WHERE c.partner_id=$1 ORDER BY c.name`, [req.params.id]
+      `SELECT c.*,
+              cm.name AS cms_name,
+              t.name  AS topic_name,
+              p2.name AS partner_name
+       FROM channel c
+       LEFT JOIN cms     cm ON c.cms_id     = cm.id
+       LEFT JOIN topic   t  ON c.topic_id   = t.id
+       LEFT JOIN partner p2 ON c.partner_id = p2.id
+       WHERE c.partner_id = $1
+       ORDER BY c.name`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch(e) { next(e); }
+});
+
+router.get("/:id/revenue", async (req, res, next) => {
+  try {
+    const days = Math.min(365, Math.max(1, Number(req.query["days"]) || 30));
+    const { queryMany } = await import("../db/helpers.js");
+    const rows = await queryMany<{
+      snapshot_date: string; revenue: number; views: number;
+      engaged_views: number; watch_time_hours: number;
+    }>(
+      `SELECT
+         ca.date                            AS snapshot_date,
+         SUM(ca.revenue)::float8            AS revenue,
+         SUM(ca.views)::float8              AS views,
+         SUM(ca.engaged_views)::float8      AS engaged_views,
+         SUM(ca.watch_time_hours)::float8   AS watch_time_hours
+       FROM channel_analytics ca
+       JOIN channel c ON c.id = ca.channel_id
+       WHERE c.partner_id = $1
+         AND ca.date >= CURRENT_DATE - ($2::int)
+       GROUP BY ca.date
+       ORDER BY ca.date ASC`,
+      [req.params.id, days]
     );
     res.json(rows);
   } catch(e) { next(e); }

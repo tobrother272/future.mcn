@@ -142,6 +142,10 @@ export function useBulkEditChannels() {
   return useMutation({
     mutationFn: (payload: { ids: string[]; updates: Partial<ChannelCreate> }) =>
       apiClient.post("channels/bulk-edit", { json: payload }).json<{ count: number }>(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["channels"] }),
+    onSuccess: () => {
+      // Invalidate both standalone channel list and CMS-scoped channel list
+      void qc.invalidateQueries({ queryKey: ["channels"] });
+      void qc.invalidateQueries({ queryKey: ["cms"] });
+    },
   });
 }

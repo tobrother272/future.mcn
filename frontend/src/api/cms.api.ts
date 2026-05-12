@@ -37,20 +37,43 @@ export function useCmsRevenue(id: string, days = 30) {
   });
 }
 
-export function useCmsTopics(id: string) {
+// ── Global topics (not per-CMS) ───────────────────────────────
+export function useTopics() {
   return useQuery({
-    queryKey: ["cms", id, "topics"],
-    queryFn: () => apiClient.get(`cms/${id}/topics`).json<Topic[]>(),
-    enabled: !!id,
+    queryKey: ["topics"],
+    queryFn: () => apiClient.get("topics").json<Topic[]>(),
+    staleTime: 60_000,
   });
 }
 
-export function useCreateTopic(cmsId: string) {
+/** @deprecated use useTopics() — kept for backward compat */
+export function useCmsTopics(_id?: string) {
+  return useTopics();
+}
+
+export function useCreateTopic(_cmsId?: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: { name: string; dept?: string; expected_channels?: number }) =>
-      apiClient.post(`cms/${cmsId}/topics`, { json: data }).json<Topic>(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["cms", cmsId, "topics"] }),
+      apiClient.post("topics", { json: data }).json<Topic>(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["topics"] }),
+  });
+}
+
+export function useUpdateTopic() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string; name?: string; dept?: string; expected_channels?: number }) =>
+      apiClient.put(`topics/${id}`, { json: data }).json<Topic>(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["topics"] }),
+  });
+}
+
+export function useDeleteTopic() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiClient.delete(`topics/${id}`).json<{ ok: boolean }>(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["topics"] }),
   });
 }
 

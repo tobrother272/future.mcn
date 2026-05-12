@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import {
   Tv2, Search, RefreshCw, ChevronDown, ChevronRight,
   CheckCircle, Settings2, User2, Building2, FileVideo,
@@ -10,7 +10,7 @@ import {
   useSubmissionList, useProvisionSubmission, useSubmissionLog,
   type Submission,
 } from "@/api/submissions.api";
-import { useCmsList, useCmsTopics } from "@/api/cms.api";
+import { useCmsList, useTopics } from "@/api/cms.api";
 import { usePartnerList } from "@/api/partners.api";
 import { useToast } from "@/stores/notificationStore";
 
@@ -32,7 +32,7 @@ function ProvisionForm({ sub, onDone }: { sub: Submission; onDone: () => void })
   const [ytId,       setYtId]       = useState("");
   const [channelName, setChannelName] = useState(sub.video_title);
 
-  const { data: topics = [] } = useCmsTopics(selectedCmsId);
+  const { data: topics = [] } = useTopics();
 
   const handleProvision = async () => {
     if (!selectedCmsId) { toast.warning("Chưa chọn CMS", "Vui lòng chọn CMS đích"); return; }
@@ -78,7 +78,7 @@ function ProvisionForm({ sub, onDone }: { sub: Submission; onDone: () => void })
         {/* Topic */}
         <div>
           <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>Topic</label>
-          <select value={topicId} onChange={(e) => setTopicId(e.target.value)} style={selectStyle} disabled={!selectedCmsId}>
+          <select value={topicId} onChange={(e) => setTopicId(e.target.value)} style={selectStyle}>
             <option value="">— Chọn topic —</option>
             {topics.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>

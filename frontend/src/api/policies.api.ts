@@ -1,24 +1,32 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "./client";
 import { useAuthStore } from "@/stores/authStore";
+export type { Topic } from "@/types/cms";
+
+export interface PolicyImage {
+  path: string;
+  caption: string;
+}
 
 export interface Policy {
   id: string;
   name: string;
   content: string;
   application: string;
-  images: string[];
+  images: PolicyImage[];
+  topic_ids: string[];
   created_at: string;
   updated_at: string;
 }
 
 interface PaginatedPolicies { items: Policy[]; total: number }
 
-export function usePolicyList(params?: { search?: string; limit?: number; offset?: number }) {
+export function usePolicyList(params?: { search?: string; topic_id?: string; limit?: number; offset?: number }) {
   const query = new URLSearchParams();
-  if (params?.search) query.set("search", params.search);
-  if (params?.limit)  query.set("limit",  String(params.limit));
-  if (params?.offset) query.set("offset", String(params.offset));
+  if (params?.search)   query.set("search",   params.search);
+  if (params?.topic_id) query.set("topic_id", params.topic_id);
+  if (params?.limit)    query.set("limit",    String(params.limit));
+  if (params?.offset)   query.set("offset",   String(params.offset));
   return useQuery<PaginatedPolicies>({
     queryKey: ["policies", params],
     queryFn: () => apiClient.get(`policies?${query}`).json<PaginatedPolicies>(),
@@ -36,7 +44,7 @@ export function usePolicy(id: string) {
 export function useCreatePolicy() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; content?: string; application?: string }) =>
+    mutationFn: (data: { name: string; content?: string; application?: string; topic_ids?: string[] }) =>
       apiClient.post("policies", { json: data }).json<Policy>(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["policies"] }),
   });
@@ -45,7 +53,7 @@ export function useCreatePolicy() {
 export function useUpdatePolicy(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name?: string; content?: string; application?: string }) =>
+    mutationFn: (data: { name?: string; content?: string; application?: string; topic_ids?: string[] }) =>
       apiClient.put(`policies/${id}`, { json: data }).json<Policy>(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["policies"] }),
   });
@@ -62,10 +70,11 @@ export function useDeletePolicy() {
 export function useUploadPolicyImages(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (files: File[]) => {
+    mutationFn: ({ files, captions }: { files: File[]; captions: string[] }) => {
       const token = useAuthStore.getState().token;
       const form  = new FormData();
       files.forEach((f) => form.append("images", f));
+      form.append("captions", JSON.stringify(captions));
       return fetch(`/api/policies/${id}/images`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -75,6 +84,15 @@ export function useUploadPolicyImages(id: string) {
         return r.json() as Promise<Policy>;
       });
     },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["policies"] }),
+  });
+}
+
+export function useSetPolicyImages(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (images: PolicyImage[]) =>
+      apiClient.put(`policies/${id}/images`, { json: images }).json<Policy>(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["policies"] }),
   });
 }

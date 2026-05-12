@@ -1,4 +1,4 @@
-﻿import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell, Legend,
@@ -170,11 +170,11 @@ function useAllCmsStats(ids: string[]) {
   });
   const all = results.map((r) => r.data).filter(Boolean) as CmsStats[];
   return {
-    totalChannels:    all.reduce((s, x) => s + (x.total_channels ?? 0), 0),
-    monetized:        all.reduce((s, x) => s + (x.monetized ?? 0), 0),
-    demonetized:      all.reduce((s, x) => s + (x.demonetized ?? 0), 0),
-    totalSubscribers: all.reduce((s, x) => s + (x.total_subscribers ?? 0), 0),
-    totalRevenue:     all.reduce((s, x) => s + (x.total_monthly_revenue ?? 0), 0),
+    totalChannels:    all.reduce((s, x) => s + Number(x.total_channels    ?? 0), 0),
+    monetized:        all.reduce((s, x) => s + Number(x.monetized         ?? 0), 0),
+    demonetized:      all.reduce((s, x) => s + Number(x.demonetized       ?? 0), 0),
+    totalSubscribers: all.reduce((s, x) => s + Number(x.total_subscribers ?? 0), 0),
+    totalRevenue:     all.reduce((s, x) => s + Number(x.total_monthly_revenue ?? 0), 0),
   };
 }
 

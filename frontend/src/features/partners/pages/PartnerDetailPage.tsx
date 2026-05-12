@@ -3,14 +3,18 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   ChevronLeft, Building2, Youtube, FileText, Users as UsersIcon,
   Percent, Globe, Mail, Phone, User, Plus, ChevronRight, ArrowRightLeft,
-  Upload, Trash2, Download, Calendar, Pencil, Eye, FileDown,
+  Upload, Trash2, Download, Calendar, Pencil, Eye, FileDown, Tag, BarChart2,
 } from "lucide-react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Legend,
+} from "recharts";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { C } from "@/styles/theme";
 import { Button, Card, Pill, StatusDot, EmptyState, Modal, Field, Input, Select } from "@/components/ui";
-import { usePartnerProfile, usePartnerList } from "@/api/partners.api";
+import { usePartnerProfile, usePartnerList, usePartnerRevenue } from "@/api/partners.api";
 import { usePartnerContracts, useUploadContract, useUpdateContract, useDeleteContract } from "@/api/contracts.api";
 import type { PartnerContract } from "@/api/contracts.api";
 import { FileViewerModal } from "@/components/ui";
@@ -25,6 +29,137 @@ import { RevenueSharePdfModal } from "../components/RevenueSharePdfModal";
 
 const TYPE_COLOR: Record<PartnerType, string> = { OWNED: C.amber, PRODUCTION: C.cyan, AFFILIATE: C.blue };
 const TIER_COLOR: Record<PartnerTier, string> = { Premium: C.purple, Standard: C.green, Basic: C.textMuted };
+
+// ── Revenue History Modal ─────────────────────────────────────
+const PERIOD_OPTIONS = [
+  { label: "30 ngày", days: 30 },
+  { label: "90 ngày", days: 90 },
+  { label: "365 ngày", days: 365 },
+];
+
+function PartnerHistoryModal({
+  open, onClose, partnerId, partnerName,
+}: { open: boolean; onClose: () => void; partnerId: string; partnerName: string }) {
+  const [days, setDays] = useState(30);
+  const { data: raw = [], isLoading } = usePartnerRevenue(partnerId, days);
+
+  const chartData = raw.map((r) => ({
+    date: fmtDate(r.snapshot_date),
+    revenue: Number(r.revenue),
+    views: Number(r.views),
+    engaged_views: Number(r.engaged_views ?? 0),
+  }));
+
+  const totalRevenue   = raw.reduce((s, r) => s + Number(r.revenue), 0);
+  const totalViews     = raw.reduce((s, r) => s + Number(r.views), 0);
+  const totalWatchTime = raw.reduce((s, r) => s + Number(r.watch_time_hours ?? 0), 0);
+  const hasAnalytics   = raw.some((r) => (r.engaged_views ?? 0) > 0 || (r.watch_time_hours ?? 0) > 0);
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Lịch sử doanh thu — ${partnerName}`} width={860}>
+      {/* Period selector */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <span style={{ fontSize: 12, color: C.textMuted }}>
+          Tổng hợp từ channel analytics của tất cả kênh đã cấp cho đối tác
+        </span>
+        <div style={{ display: "flex", gap: 6 }}>
+          {PERIOD_OPTIONS.map((opt) => (
+            <Button key={opt.days} size="sm"
+              variant={days === opt.days ? "primary" : "secondary"}
+              onClick={() => setDays(opt.days)}>
+              {opt.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+        {[
+          { label: "Tổng doanh thu", value: fmtCurrency(totalRevenue), color: C.amber },
+          { label: "Tổng lượt xem",  value: fmt(totalViews),           color: C.blue },
+          { label: "Watch time (h)", value: fmt(Math.round(totalWatchTime)), color: C.cyan },
+          { label: "Số ngày có data", value: String(raw.length),        color: C.text },
+        ].map((k) => (
+          <div key={k.label} style={{ background: C.bgHover, borderRadius: 8, padding: "10px 14px" }}>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 3 }}>{k.label}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: k.color }}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Chart */}
+      <Card padding="16px" style={{ marginBottom: 16 }}>
+        {isLoading ? (
+          <div style={{ height: 240, display: "flex", alignItems: "center", justifyContent: "center", color: C.textSub }}>Đang tải...</div>
+        ) : chartData.length === 0 ? (
+          <div style={{ height: 240, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.textMuted, gap: 8 }}>
+            <BarChart2 size={32} color={C.textMuted} />
+            <div style={{ fontSize: 14 }}>Chưa có dữ liệu analytics</div>
+            <div style={{ fontSize: 12 }}>Dữ liệu xuất hiện sau khi sync qua Public API</div>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <LineChart data={chartData} margin={{ top: 4, right: 36, left: 0, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: C.textMuted }} tickLine={false} />
+              <YAxis yAxisId="left"  tick={{ fontSize: 9, fill: C.textMuted }} tickLine={false}
+                tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9, fill: C.textMuted }} tickLine={false}
+                tickFormatter={(v: number) => `${(v / 1_000_000).toFixed(1)}M`} />
+              <Tooltip
+                contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                formatter={(value: number, name: string) =>
+                  name === "Revenue ($)" ? [`$${value.toFixed(3)}`, name] : [fmt(value), name]
+                }
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Line yAxisId="left"  type="monotone" dataKey="revenue"       stroke={C.amber} strokeWidth={2} dot={false} name="Revenue ($)" />
+              <Line yAxisId="right" type="monotone" dataKey="views"         stroke={C.blue}  strokeWidth={2} dot={false} name="Views" />
+              {hasAnalytics && (
+                <Line yAxisId="right" type="monotone" dataKey="engaged_views" stroke={C.cyan} strokeWidth={1.5} dot={false} name="Engaged Views" strokeDasharray="4 2" />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </Card>
+
+      {/* Table */}
+      <div style={{ maxHeight: 280, overflowY: "auto", borderRadius: 8, border: `1px solid ${C.border}` }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead style={{ position: "sticky", top: 0, background: C.bgHover }}>
+            <tr>
+              {[
+                "Ngày", "Revenue", "Views",
+                ...(hasAnalytics ? ["Engaged Views", "Watch Time (h)"] : []),
+              ].map((h) => (
+                <th key={h} style={{ padding: "8px 14px", textAlign: "left", fontSize: 11, color: C.textMuted, fontWeight: 600 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {[...raw].reverse().map((r) => (
+              <tr key={r.snapshot_date} style={{ borderTop: `1px solid ${C.border}` }}>
+                <td style={{ padding: "6px 14px", color: C.textSub }}>{fmtDate(r.snapshot_date)}</td>
+                <td style={{ padding: "6px 14px", color: C.amber, fontWeight: 600 }}>{fmtCurrency(Number(r.revenue))}</td>
+                <td style={{ padding: "6px 14px", color: C.text }}>{fmt(Number(r.views))}</td>
+                {hasAnalytics && <>
+                  <td style={{ padding: "6px 14px", color: C.cyan }}>{fmt(Number(r.engaged_views ?? 0))}</td>
+                  <td style={{ padding: "6px 14px", color: C.textSub }}>{Number(r.watch_time_hours ?? 0).toFixed(1)}</td>
+                </>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {raw.length === 0 && !isLoading && (
+          <div style={{ padding: "20px 14px", textAlign: "center", color: C.textMuted }}>
+            Chưa có dữ liệu trong khoảng thời gian này
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
 
 // ── Add Channel Modal ─────────────────────────────────────────
 const addChannelSchema = z.object({
@@ -161,7 +296,14 @@ function TransferChannelModal({
 }
 
 // ── Interfaces ────────────────────────────────────────────────
-interface ChannelItem { id: string; name: string; status: string; monetization: string; monthly_revenue: number; subscribers: number; }
+interface ChannelItem {
+  id: string; name: string; yt_id?: string | null;
+  status: string; monetization: string;
+  subscribers: number; monthly_views: number; total_views: number;
+  monthly_revenue: number; last_revenue: number; last_sync?: string | null; last_sync_analytic?: string | null;
+  link_date?: string | null; strikes: number; video: number;
+  cms_name?: string; topic_name?: string;
+}
 interface ContractItem { id: string; contract_name: string; type: string; status: string; start_date: string; end_date: string | null; rev_share: number; }
 interface UserItem { id: string; email: string; full_name: string; status: string; last_login: string | null; }
 
@@ -177,6 +319,7 @@ export default function PartnerDetailPage() {
   const [parentTab, setParentTab] = useState<ParentTab>("sub-partners");
   const [childTab,  setChildTab]  = useState<ChildTab>("channels");
   const [appendixChild, setAppendixChild] = useState<Partner | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const { data: partner, isLoading } = usePartnerProfile(id!);
   const { data: partnerContracts = [] } = usePartnerContracts(id!);
@@ -264,10 +407,21 @@ export default function PartnerDetailPage() {
         />
       )}
 
-      <Button variant="ghost" size="sm" icon={<ChevronLeft size={14} />}
-        onClick={() => navigate("/partners")} style={{ marginBottom: 16 }}>
-        Danh sách đối tác
-      </Button>
+      <PartnerHistoryModal
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        partnerId={id!}
+        partnerName={partner.name}
+      />
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <Button variant="ghost" size="sm" icon={<ChevronLeft size={14} />} onClick={() => navigate("/partners")}>
+          Danh sách đối tác
+        </Button>
+        <Button variant="secondary" size="sm" icon={<BarChart2 size={14} />} onClick={() => setHistoryOpen(true)}>
+          Lịch sử doanh thu
+        </Button>
+      </div>
 
       {/* Parent breadcrumb for child partners */}
       {partner.parent_id && (partner as Partner & { parent_name?: string }).parent_name && (
@@ -489,34 +643,74 @@ export default function PartnerDetailPage() {
                   description="Nhấn Add Channel để thêm kênh vào đối tác này"
                   action={<Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setAddChannelOpen(true)}>Add Channel</Button>} />
               ) : (
-                <Card padding={0} style={{ overflow: "hidden" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12, overflowX: "auto" }}>
+                  <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
                       <tr style={{ background: C.bgHover, borderBottom: `1px solid ${C.border}` }}>
-                        {["Tên kênh","Trạng thái","Monetization","Subscribers","Revenue",""].map((h) => (
-                          <th key={h} style={{ padding: "9px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.textMuted }}>{h}</th>
+                        {["Channel","Topic","CMS","Status","Monetization","Link Date","Copyright","Video","Total Views","Subscribers","Revenue","Last Revenue",""].map((h) => (
+                          <th key={h} style={{
+                            padding: h === "Copyright" ? "9px 8px" : "9px 16px",
+                            width: h === "Copyright" ? 70 : undefined,
+                            textAlign: h === "Copyright" ? "center" : "left",
+                            fontSize: 11, fontWeight: 600, color: C.textMuted, whiteSpace: "nowrap",
+                          }}>{h.toUpperCase()}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {channels.map((c) => (
-                        <tr key={c.id} style={{ borderBottom: `1px solid ${C.border}` }}
+                        <tr key={c.id}
+                          style={{ borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}
                           onMouseEnter={(e) => (e.currentTarget.style.background = C.bgHover)}
                           onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                          onClick={() => navigate(`/channels/${c.id}`)}
                         >
-                          <td style={{ padding: "10px 16px", fontWeight: 500, color: C.text, cursor: "pointer" }}
-                            onClick={() => navigate(`/channels/${c.id}`)}>
-                            {c.name}
+                          <td style={{ padding: "10px 16px" }}>
+                            <div style={{ fontWeight: 500, color: C.text }}>{c.name}</div>
+                            {c.yt_id && <div style={{ fontSize: 11, color: C.textMuted }}>{c.yt_id}</div>}
                           </td>
+                          <td style={{ padding: "10px 16px" }}>
+                            {c.topic_name ? (
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
+                                fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 5,
+                                background: `${C.purple}18`, color: C.purple }}>
+                                <Tag size={10} />{c.topic_name}
+                              </span>
+                            ) : <span style={{ color: C.textMuted, fontSize: 12 }}>—</span>}
+                          </td>
+                          <td style={{ padding: "10px 16px", color: C.textMuted, fontSize: 12 }}>{c.cms_name ?? "—"}</td>
                           <td style={{ padding: "10px 16px" }}><StatusDot status={c.status} /></td>
                           <td style={{ padding: "10px 16px" }}><StatusDot status={c.monetization} /></td>
+                          <td style={{ padding: "10px 16px", color: C.textMuted, fontSize: 12, whiteSpace: "nowrap" }}>
+                            {c.link_date ? String(c.link_date).slice(0, 10) : "—"}
+                          </td>
+                          <td style={{ padding: "6px 8px", textAlign: "center", width: 60 }}>
+                            {(c.strikes ?? 0) > 0
+                              ? <span style={{ fontWeight: 600, color: C.red, fontSize: 12 }}>{c.strikes}</span>
+                              : <span style={{ color: C.textMuted, fontSize: 12 }}>0</span>}
+                          </td>
+                          <td style={{ padding: "10px 16px", color: C.textSub }}>{fmt(c.video ?? 0)}</td>
+                          <td style={{ padding: "10px 16px", color: C.text }}>{fmt(c.total_views)}</td>
                           <td style={{ padding: "10px 16px", color: C.textSub }}>{fmt(c.subscribers)}</td>
                           <td style={{ padding: "10px 16px", color: C.amber, fontWeight: 600 }}>{fmtCurrency(c.monthly_revenue)}</td>
-                          <td style={{ padding: "10px 8px", textAlign: "right" }}>
+                          <td style={{ padding: "10px 16px" }}>
+                            {(c.last_revenue ?? 0) > 0 ? (
+                              <span
+                                title={c.last_sync_analytic ? `Last analytic sync: ${new Date(c.last_sync_analytic).toLocaleString("vi-VN")}` : "Chưa sync analytics"}
+                                style={{ fontWeight: 600, color: C.green, cursor: "default", borderBottom: `1px dashed ${C.green}55` }}
+                              >
+                                {fmtCurrency(c.last_revenue)}
+                              </span>
+                            ) : (
+                              <span style={{ color: C.textMuted, fontSize: 12 }}
+                                title={c.last_sync_analytic ? `Last analytic sync: ${new Date(c.last_sync_analytic).toLocaleString("vi-VN")}` : "Chưa sync analytics"}>—</span>
+                            )}
+                          </td>
+                          <td style={{ padding: "10px 8px" }} onClick={(e) => e.stopPropagation()}>
                             <Button
                               size="sm" variant="ghost"
                               icon={<ArrowRightLeft size={13} />}
-                              onClick={(e) => { e.stopPropagation(); setTransferChannel(c); }}
+                              onClick={() => setTransferChannel(c)}
                               title="Chuyển sang đối tác khác"
                             >
                               Chuyển
@@ -526,7 +720,7 @@ export default function PartnerDetailPage() {
                       ))}
                     </tbody>
                   </table>
-                </Card>
+                </div>
               )}
             </>
           )}

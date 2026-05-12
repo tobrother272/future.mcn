@@ -21,6 +21,7 @@ export interface Channel {
   monthly_revenue: number;
   last_revenue: number;
   last_sync?: string | null;
+  last_sync_analytic?: string | null;
   link_date?: string | null;
   notes?: string | null;
   metadata: Record<string, unknown>;

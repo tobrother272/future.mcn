@@ -35,15 +35,22 @@ const bodySchema = z.object({
   name:        z.string().min(1),
   content:     z.string().optional(),
   application: z.string().optional(),
+  topic_ids:   z.array(z.string()).optional(),
+});
+
+const policyImageSchema = z.object({
+  path:    z.string().min(1),
+  caption: z.string().default(""),
 });
 
 // GET /api/policies
 router.get("/", async (req, res, next) => {
   try {
     res.json(await PolicyService.list({
-      search: req.query.search as string | undefined,
-      limit:  req.query.limit  ? Number(req.query.limit)  : undefined,
-      offset: req.query.offset ? Number(req.query.offset) : undefined,
+      search:   req.query.search   as string | undefined,
+      topic_id: req.query.topic_id as string | undefined,
+      limit:    req.query.limit    ? Number(req.query.limit)  : undefined,
+      offset:   req.query.offset   ? Number(req.query.offset) : undefined,
     }));
   } catch (e) { next(e); }
 });
@@ -75,19 +82,41 @@ router.put("/:id", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// POST /api/policies/:id/images — upload multiple images
+// POST /api/policies/:id/images — upload multiple images (with optional captions in form fields)
 router.post("/:id/images", upload.array("images", 20), async (req, res, next) => {
   try {
     const files = req.files as Express.Multer.File[] | undefined;
     if (!files?.length) { res.status(400).json({ error: "Không có ảnh" }); return; }
-    const paths = files.map((f) => `uploads/policies/${f.filename}`);
-    const updated = await PolicyService.addImages(req.params.id!, paths);
+
+    // Support captions passed as form field "captions" (JSON array) or individual "caption_0", "caption_1"...
+    let captionsArr: string[] = [];
+    const rawCaptions = (req.body as Record<string, unknown>)["captions"];
+    if (typeof rawCaptions === "string") {
+      try { captionsArr = JSON.parse(rawCaptions) as string[]; } catch { captionsArr = []; }
+    }
+
+    const newImages = files.map((f, i) => ({
+      path:    `uploads/policies/${f.filename}`,
+      caption: captionsArr[i] ?? (req.body as Record<string, unknown>)[`caption_${i}`] as string ?? "",
+    }));
+
+    const updated = await PolicyService.addImages(req.params.id!, newImages);
     if (!updated) { res.status(404).json({ error: "Không tìm thấy" }); return; }
     res.json(updated);
   } catch (e) { next(e); }
 });
 
-// DELETE /api/policies/:id/images — remove one image
+// PUT /api/policies/:id/images — update images array (reorder + edit captions, no file upload)
+router.put("/:id/images", async (req, res, next) => {
+  try {
+    const images = z.array(policyImageSchema).parse(req.body);
+    const updated = await PolicyService.setImages(req.params.id!, images);
+    if (!updated) { res.status(404).json({ error: "Không tìm thấy" }); return; }
+    res.json(updated);
+  } catch (e) { next(e); }
+});
+
+// DELETE /api/policies/:id/images — remove one image by path
 router.delete("/:id/images", async (req, res, next) => {
   try {
     const { imagePath } = req.body as { imagePath: string };

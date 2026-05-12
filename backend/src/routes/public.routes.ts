@@ -262,6 +262,68 @@ router.get("/whoami", async (req, res) => {
   });
 });
 
+/**
+ * GET /api/public/analytics/next?api_key=<KEY>
+ *
+ * Work-queue endpoint. Returns the single channel in this CMS that has gone
+ * the longest without an analytics sync (NULL last_sync first, then oldest).
+ *
+ * Typical loop for a scraper tool:
+ *   while True:
+ *     ch = GET /api/public/analytics/next?api_key=KEY
+ *     if ch.yt_id is None: break / sleep
+ *     data = scrape_youtube_analytics(ch.yt_id)
+ *     POST /api/public/analytics/sync/{ch.yt_id}?api_key=KEY  { items: data }
+ *
+ * Response:
+ *   { ok, cms_id, yt_id, channel_id, name, subscribers, monetization,
+ *     status, last_sync, minutes_since_sync }
+ *   yt_id is null when every channel has been synced recently.
+ */
+router.get("/analytics/next", async (req, res, next) => {
+  try {
+    const cms_id = req.apiKey!.cms_id;
+
+    const ch = await queryOne<{
+      yt_id: string; channel_id: string; name: string; subscribers: number;
+      monetization: string; status: string;
+      last_sync_analytic: string | null; minutes_since_analytic: number | null;
+    }>(
+      `SELECT
+         c.yt_id,
+         c.id                  AS channel_id,
+         c.name,
+         c.subscribers,
+         c.monetization,
+         c.status,
+         c.last_sync_analytic,
+         CASE WHEN c.last_sync_analytic IS NOT NULL
+              THEN ROUND(EXTRACT(EPOCH FROM (NOW() - c.last_sync_analytic)) / 60)::int
+              ELSE NULL END AS minutes_since_analytic
+       FROM channel c
+       WHERE c.cms_id = $1
+         AND c.yt_id  IS NOT NULL
+         AND (c.last_sync_analytic IS NULL OR c.last_sync_analytic <= NOW() - INTERVAL '2 hours')
+       ORDER BY c.last_sync_analytic ASC NULLS FIRST
+       LIMIT 1`,
+      [cms_id],
+    );
+
+    res.json({
+      ok:                    true,
+      cms_id,
+      yt_id:                 ch?.yt_id                  ?? null,
+      channel_id:            ch?.channel_id              ?? null,
+      name:                  ch?.name                   ?? null,
+      subscribers:           ch?.subscribers             ?? null,
+      monetization:          ch?.monetization            ?? null,
+      status:                ch?.status                  ?? null,
+      last_sync_analytic:    ch?.last_sync_analytic      ?? null,
+      minutes_since_analytic: ch?.minutes_since_analytic ?? null,
+    });
+  } catch (e) { next(e); }
+});
+
 router.post("/channels/sync", async (req, res, next) => {
   try {
     const parsed = syncBodySchema.safeParse(req.body);
@@ -423,13 +485,20 @@ router.post("/analytics/sync/:yt_id", async (req, res, next) => {
       );
     }
 
-    // Update last_revenue (from the most recent date in this batch) + last_sync
+    // Update last_revenue (most recent date in batch), monthly_revenue (sum last 30d),
+    // last_sync_analytic (timestamp of this analytics push), last_sync
     if (latestItem) {
       await query(
         `UPDATE channel
-         SET last_revenue = $1,
-             last_sync    = NOW(),
-             updated_at   = NOW()
+         SET last_revenue         = $1,
+             monthly_revenue      = COALESCE((
+               SELECT SUM(revenue) FROM channel_analytics
+               WHERE channel_id = $2
+                 AND date >= CURRENT_DATE - 30
+             ), 0),
+             last_sync_analytic   = NOW(),
+             last_sync            = NOW(),
+             updated_at           = NOW()
          WHERE id = $2`,
         [latestItem.revenue, ch.id],
       );

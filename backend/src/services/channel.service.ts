@@ -20,6 +20,7 @@ interface ChannelFilters {
   sortBy?: string; sortDir?: "asc" | "desc";
 }
 
+
 export const ChannelService = {
   async list(filters: ChannelFilters) {
     const andClauses: string[] = [];

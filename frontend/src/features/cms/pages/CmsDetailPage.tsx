@@ -1,9 +1,10 @@
-﻿import { useState, useRef } from "react";
+import { useState, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronLeft, History, Tv, Upload, CheckCircle, AlertCircle, UserCog, Building2, ArrowRightLeft, Tag, Plus, Server, Trash2 } from "lucide-react";
+import { ChevronLeft, History, Tv, Upload, CheckCircle, AlertCircle, UserCog, Building2, ArrowRightLeft, Tag, Plus, Server, Trash2, Search } from "lucide-react";
 import { C } from "@/styles/theme";
 import { Button, Pill, Card, Input, EmptyState, StatusDot, Modal, Field } from "@/components/ui";
-import { useCms, useCmsStats, useCmsChannels, useCmsTopics, useCmsList, useCreateTopic, useClearCmsChannels } from "@/api/cms.api";
+import { useCms, useCmsStats, useCmsChannels, useTopics, useCmsList, useCreateTopic, useClearCmsChannels } from "@/api/cms.api";
 import { useBulkImportChannels, useUpdateChannel, useBulkEditChannels } from "@/api/channels.api";
 import { usePartnerList } from "@/api/partners.api";
 import { useToast } from "@/stores/notificationStore";
@@ -145,29 +146,43 @@ function TransferCmsModal({
   );
 }
 
-// ── Assign Partner Modal ──────────────────────────────────────
+// ── Assign Partner Modal (bulk) ───────────────────────────────
 function AssignPartnerModal({
-  channel,
+  channelIds,
+  cmsId,
   onClose,
 }: {
-  channel: Channel;
+  channelIds: string[];
+  cmsId: string;
   onClose: () => void;
 }) {
-  const toast = useToast();
-  const updateMut = useUpdateChannel(channel.id);
+  const toast    = useToast();
+  const qc       = useQueryClient();
+  const bulkEdit = useBulkEditChannels();
   const { data } = usePartnerList({ status: "Active", limit: 500 });
 
-  // Chỉ hiện partner con (có parent_id)
   const childPartners: Partner[] = (data?.items ?? []).filter((p) => !!p.parent_id);
 
-  const [selectedId, setSelectedId] = useState<string>(channel.partner_id ?? "");
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [search, setSearch]         = useState("");
+
+  const filtered = childPartners.filter((p) =>
+    !search || p.name.toLowerCase().includes(search.toLowerCase()) ||
+    (p.company_name ?? "").toLowerCase().includes(search.toLowerCase())
+  );
 
   const handleSave = async () => {
-    if (selectedId === (channel.partner_id ?? "")) { onClose(); return; }
     try {
-      await updateMut.mutateAsync({ partner_id: selectedId || undefined });
-      const name = childPartners.find((p) => p.id === selectedId)?.name ?? "—";
-      toast.success("Đã gán partner", `${channel.name} → ${name}`);
+      const res = await bulkEdit.mutateAsync({
+        ids: channelIds,
+        updates: { partner_id: selectedId || null },
+      });
+      await qc.invalidateQueries({ queryKey: ["cms", cmsId, "channels"] });
+      const name = childPartners.find((p) => p.id === selectedId)?.name;
+      toast.success(
+        "Đã gán partner",
+        name ? `${res.count} kênh → "${name}"` : `Đã bỏ partner cho ${res.count} kênh`
+      );
       onClose();
     } catch (err) {
       toast.error("Lỗi", err instanceof Error ? err.message : "");
@@ -175,20 +190,24 @@ function AssignPartnerModal({
   };
 
   return (
-    <Modal open onClose={onClose} title={`Gán Partner: ${channel.name}`} width={440}
+    <Modal open onClose={onClose}
+      title={`Gán Partner — ${channelIds.length} kênh đã chọn`}
+      width={460}
       footer={
         <>
           <Button variant="ghost" size="sm" onClick={onClose}>Hủy</Button>
-          <Button variant="primary" size="sm" loading={updateMut.isPending}
+          <Button variant="primary" size="sm" loading={bulkEdit.isPending}
             onClick={() => void handleSave()}>
-            {selectedId ? "Gán partner" : "Bỏ partner"}
+            {selectedId ? `Gán partner (${channelIds.length})` : `Bỏ partner (${channelIds.length})`}
           </Button>
         </>
       }
     >
-      <div style={{ fontSize: 13, color: C.textSub, marginBottom: 14 }}>
-        Partner hiện tại:{" "}
-        <strong style={{ color: C.text }}>{channel.partner_name ?? "Chưa gán"}</strong>
+      {/* Search */}
+      <div style={{ position: "relative", marginBottom: 10 }}>
+        <Search size={12} color={C.textMuted} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm partner..."
+          style={{ width: "100%", paddingLeft: 30, paddingRight: 10, paddingTop: 7, paddingBottom: 7, background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
       </div>
 
       {/* Bỏ partner */}
@@ -203,13 +222,13 @@ function AssignPartnerModal({
         <span style={{ fontSize: 13, color: C.textMuted, fontStyle: "italic" }}>Bỏ partner (không gán)</span>
       </label>
 
-      {childPartners.length === 0 ? (
+      {filtered.length === 0 ? (
         <div style={{ fontSize: 13, color: C.textMuted, textAlign: "center", padding: "16px 0" }}>
-          Chưa có partner con nào đang hoạt động
+          {search ? "Không tìm thấy partner" : "Chưa có partner con nào đang hoạt động"}
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
-          {childPartners.map((p) => (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 340, overflowY: "auto" }}>
+          {filtered.map((p) => (
             <label key={p.id} style={{
               display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
               borderRadius: 8, border: `1px solid ${selectedId === p.id ? C.blue : C.border}`,
@@ -248,9 +267,10 @@ function AssignTopicModal({
   onClose: () => void;
 }) {
   const toast = useToast();
+  const qc          = useQueryClient();
   const bulkEdit    = useBulkEditChannels();
   const createTopic = useCreateTopic(cmsId);
-  const { data: topics = [], refetch } = useCmsTopics(cmsId);
+  const { data: topics = [], refetch } = useTopics();
 
   const [selectedId, setSelectedId] = useState<string>("");
   const [newName, setNewName]       = useState("");
@@ -278,6 +298,8 @@ function AssignTopicModal({
       const res = await bulkEdit.mutateAsync({ ids: channelIds, updates: { topic_id: selectedId } });
       const name = topics.find((t) => t.id === selectedId)?.name ?? selectedId;
       toast.success("Đã gán chủ đề", `${res.count} kênh → "${name}"`);
+      // Force refresh CMS channel list immediately
+      await qc.invalidateQueries({ queryKey: ["cms", cmsId, "channels"] });
       onClose();
     } catch (err) {
       toast.error("Lỗi", err instanceof Error ? err.message : "");
@@ -523,7 +545,7 @@ export default function CmsDetailPage() {
   const [minViews, setMinViews]         = useState("");
   const [minRevenue, setMinRevenue]     = useState("");
   const [showImport, setShowImport] = useState(false);
-  const [assigningChannel, setAssigningChannel] = useState<Channel | null>(null);
+  const [showAssignPartner, setShowAssignPartner] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showTransferCms, setShowTransferCms] = useState(false);
   const [showAssignTopic, setShowAssignTopic] = useState(false);
@@ -543,7 +565,7 @@ export default function CmsDetailPage() {
     ...(minRevenue  ? { min_revenue: Number(minRevenue)}: {}),
     limit: 100,
   });
-  const { data: topics } = useCmsTopics(id!);
+  const { data: topics } = useTopics();
 
   if (isLoading) return <div style={{ padding: 24, color: C.textSub }}>Đang tải...</div>;
   if (!cms) return <div style={{ padding: 24, color: C.red }}>CMS không tồn tại</div>;
@@ -580,8 +602,8 @@ export default function CmsDetailPage() {
           </div>
         </Modal>
       )}
-      {assigningChannel && (
-        <AssignPartnerModal channel={assigningChannel} onClose={() => setAssigningChannel(null)} />
+      {showAssignPartner && (
+        <AssignPartnerModal channelIds={[...selectedIds]} cmsId={id!} onClose={() => { setShowAssignPartner(false); setSelectedIds(new Set()); }} />
       )}
       {showTransferCms && (
         <TransferCmsModal
@@ -771,6 +793,17 @@ export default function CmsDetailPage() {
               >
                 Gán chủ đề{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
               </Button>
+              {/* Gán partner */}
+              <Button
+                variant={selectedIds.size > 0 ? "secondary" : "ghost"}
+                size="sm"
+                icon={<UserCog size={14} />}
+                disabled={selectedIds.size === 0}
+                onClick={() => setShowAssignPartner(true)}
+                style={{ color: selectedIds.size > 0 ? C.blue : undefined, borderColor: selectedIds.size > 0 ? C.blue : undefined }}
+              >
+                Gán partner{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
+              </Button>
               {/* Chuyển CMS */}
               <Button
                 variant={selectedIds.size > 0 ? "primary" : "ghost"}
@@ -880,7 +913,7 @@ export default function CmsDetailPage() {
                       <td style={{ padding: "10px 16px" }}>
                         {ch.last_revenue > 0 ? (
                           <span
-                            title={ch.last_sync ? `Last sync: ${new Date(ch.last_sync).toLocaleString("vi-VN")}` : "Chưa sync"}
+                            title={ch.last_sync_analytic ? `Last analytic sync: ${new Date(ch.last_sync_analytic).toLocaleString("vi-VN")}` : "Chưa sync analytics"}
                             style={{
                               fontWeight: 600, color: C.green, cursor: "default",
                               borderBottom: `1px dashed ${C.green}55`,
@@ -890,32 +923,19 @@ export default function CmsDetailPage() {
                           </span>
                         ) : (
                           <span
-                            title={ch.last_sync ? `Last sync: ${new Date(ch.last_sync).toLocaleString("vi-VN")}` : "Chưa sync"}
+                            title={ch.last_sync_analytic ? `Last analytic sync: ${new Date(ch.last_sync_analytic).toLocaleString("vi-VN")}` : "Chưa sync analytics"}
                             style={{ color: C.textMuted, fontSize: 12, cursor: "default" }}
                           >
                             —
                           </span>
                         )}
                       </td>
-                      <td style={{ padding: "10px 16px" }} onClick={(e) => e.stopPropagation()}>
-                        <button
-                          title={ch.partner_name ? "Đổi partner" : "Gán partner"}
-                          onClick={() => setAssigningChannel(ch)}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 5,
-                            padding: "4px 10px", borderRadius: 6, cursor: "pointer",
-                            fontSize: 11, fontWeight: 600,
-                            border: `1px solid ${C.border}`,
-                            background: C.bgHover,
-                            color: ch.partner_name ? C.blue : C.textMuted,
-                            whiteSpace: "nowrap",
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.blue; e.currentTarget.style.color = C.blue; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = ch.partner_name ? C.blue : C.textMuted; }}
-                        >
-                          <UserCog size={11} />
-                          {ch.partner_name ? "Đổi" : "Gán"}
-                        </button>
+                      <td style={{ padding: "10px 16px" }}>
+                        {ch.partner_name ? (
+                          <span style={{ fontSize: 12, color: C.blue, fontWeight: 600 }}>{ch.partner_name}</span>
+                        ) : (
+                          <span style={{ fontSize: 12, color: C.textMuted }}>—</span>
+                        )}
                       </td>
                     </tr>
                   ))}
