@@ -1,0 +1,88 @@
+---
+description: Backend Express/Node.js safety patterns — error handling, validation, rate limiting, startup
+globs: backend/**/*.js
+alwaysApply: false
+---
+
+# Backend Express Safety Patterns
+
+## 1. Không lộ lỗi nội bộ ra client
+
+```js
+// ❌ SAI — lộ stack/DB error
+res.status(500).json({ error: e.message });
+
+// ✅ ĐÚNG — che đi khi production
+const IS_PROD = process.env.NODE_ENV === "production";
+res.status(500).json({ error: IS_PROD ? "Internal server error" : e.message });
+```
+
+## 2. `x-forwarded-for` phải lấy IP đầu tiên
+
+Header này có thể là danh sách `"1.2.3.4, 5.6.7.8"` — luôn tách lấy phần tử đầu.
+
+```js
+// ❌ SAI
+const ip = req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
+
+// ✅ ĐÚNG
+const forwarded = req.headers["x-forwarded-for"];
+const ip = (forwarded ? forwarded.split(",")[0].trim() : null)
+  || req.ip
+  || req.socket?.remoteAddress
+  || "unknown";
+```
+
+## 3. Startup IIFE phải có `.catch()`
+
+```js
+// ❌ SAI — unhandled rejection nếu DB không sẵn sàng
+(async () => {
+  await waitForDb();
+  app.listen(PORT);
+})();
+
+// ✅ ĐÚNG
+(async () => {
+  await waitForDb();
+  app.listen(PORT);
+})().catch(err => {
+  console.error("Fatal startup error:", err.message);
+  process.exit(1);
+});
+```
+
+## 4. Bulk insert phải đếm item thực sự hợp lệ
+
+```js
+// ❌ SAI — đếm cả item bị skip
+res.json({ ok: true, count: items.length });
+
+// ✅ ĐÚNG
+const validCount = items.filter(({ key }) => !!key).length;
+res.json({ ok: true, count: validCount });
+```
+
+## 5. Validate body trước khi insert
+
+Luôn kiểm tra các field bắt buộc trước khi gọi DB:
+
+```js
+// ✅ ĐÚNG
+if (!action) return res.status(400).json({ error: "action is required" });
+if (!fileName) return res.status(400).json({ error: "fileName is required" });
+```
+
+## 6. `file_hash = NULL` không dedup được với UNIQUE constraint
+
+PostgreSQL cho phép nhiều NULL trong cột UNIQUE. Phải xử lý riêng:
+
+```js
+// ✅ ĐÚNG
+const hash = (fileHash && fileHash.trim()) ? fileHash.trim() : null;
+if (!hash) {
+  // INSERT trực tiếp, không ON CONFLICT
+} else {
+  // INSERT ... ON CONFLICT(file_hash) DO NOTHING
+}
+```

@@ -1,0 +1,22 @@
+
+http://localhost:3020
+
+Email : admin@meridian.vn
+Mật khẩu : Admin@2026
+
+
+
+## Thông tin kết nối
+
+| Service    | Địa chỉ                   |
+|------------|---------------------------|
+| Frontend   | http://localhost:3020     |
+| Backend    | http://localhost:4010     |
+| PostgreSQL | localhost:5433            |
+
+| Tài khoản | Giá trị                   |
+|-----------|---------------------------|
+| Email     | admin@meridian.vn         |
+| Mật khẩu  | Admin@2026                |
+| DB User   | meridian                  |
+| DB Pass   | Meridian@2026             |

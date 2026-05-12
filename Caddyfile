@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Caddy v2 — TLS termination + reverse proxy for Meridian MCN.
+#
+#   • Uses {$PUBLIC_DOMAIN} from the env so the same Caddyfile works across
+#     environments (dev/staging/prod) without editing the file.
+#   • Caddy automatically obtains and renews a Let's Encrypt certificate the
+#     first time it sees a successful HTTP-01 challenge on port 80 — so port
+#     80 MUST remain reachable from the public Internet (don't block it on
+#     the router or UFW).
+#   • All HTTP traffic is auto-upgraded to HTTPS by Caddy.
+#   • Static SPA + /api proxying is delegated to the `frontend` container,
+#     which already does that locally; Caddy just hands it the request.
+# ─────────────────────────────────────────────────────────────────────────────
+
+{
+    # ACME contact email — falls back to a sentinel so Caddy still boots if
+    # the operator forgot to set ACME_EMAIL in .env.prod.
+    email {$ACME_EMAIL:admin@example.com}
+
+    # Quieter access log; the proxied containers already log their own
+    # request lines.
+    servers {
+        trusted_proxies static private_ranges
+    }
+}
+
+{$PUBLIC_DOMAIN} {
+    encode zstd gzip
+
+    # Sensible defaults so the SPA gets reasonable security headers without
+    # the frontend image having to know about them.
+    header {
+        Strict-Transport-Security  "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options     "nosniff"
+        X-Frame-Options            "SAMEORIGIN"
+        Referrer-Policy            "strict-origin-when-cross-origin"
+        Permissions-Policy         "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
+    # Generous body size for upload endpoints (contracts, violation images).
+    request_body {
+        max_size 50MB
+    }
+
+    reverse_proxy frontend:80 {
+        # Preserve the original host/scheme so the backend logs / CORS
+        # behave correctly when called via https://<domain>/api/...
+        header_up Host              {host}
+        header_up X-Real-IP         {remote_host}
+        header_up X-Forwarded-For   {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    log {
+        output stderr
+        format console
+        level  INFO
+    }
+}

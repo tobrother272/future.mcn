@@ -1,0 +1,120 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Production compose for Meridian MCN.
+#
+# Topology (entry → backend):
+#   Internet → meridian-frontend (nginx :8080, serves SPA + /api proxy)
+#            → meridian-backend  (Express, /api/*)
+#            → meridian-postgres (PG 16)
+#
+# Note on TLS:
+#   Port 80/443 on the public IP are already occupied by another service
+#   on the same NAT, so we publish the SPA on host port 8080 (HTTP only).
+#   Let's Encrypt HTTP-01/TLS-ALPN-01 can't run without owning 80/443, so
+#   HTTPS will need a different approach (Cloudflare Tunnel, a reverse
+#   proxy elsewhere, or freeing up 443) if you want it later.
+#
+# Backend + Postgres remain loopback-only on the host so the only public
+# entry is the frontend's HTTP listener.
+#
+# Usage on the VPS:
+#   cp .env.prod.example .env.prod && nano .env.prod    # fill secrets + domain
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: meridian-postgres
+    restart: always
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    # Loopback-only: reachable from the host (pg_dump / docker exec) and from
+    # other containers via the internal network, never from the public NIC.
+    ports:
+      - "127.0.0.1:5433:5432"
+    networks:
+      - meridian-net
+    healthcheck:
+      test:     ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout:  5s
+      retries:  10
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  backend:
+    build:
+      context:    ./backend
+      dockerfile: Dockerfile
+    image: meridian-backend:prod
+    container_name: meridian-backend
+    restart: always
+    environment:
+      NODE_ENV:            production
+      PORT:                4000
+      DATABASE_URL:        postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      JWT_SECRET:          ${JWT_SECRET}
+      JWT_EXPIRES_IN:      ${JWT_EXPIRES_IN:-7d}
+      CORS_ORIGINS:        ${CORS_ORIGINS}
+      LOG_LEVEL:           ${LOG_LEVEL:-info}
+      MERIDIAN_API_TOKEN:  ${MERIDIAN_API_TOKEN}
+    # Loopback-only; clients go through Caddy → frontend → here.
+    ports:
+      - "127.0.0.1:4010:4000"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - meridian-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  frontend:
+    build:
+      context:    ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_TOKEN: ${MERIDIAN_API_TOKEN}
+    image: meridian-frontend:prod
+    container_name: meridian-frontend
+    restart: always
+    # Public entry on host port 8080 (HTTP). 80/443 on this NAT are taken
+    # by another service, so we expose on a non-standard port instead.
+    ports:
+      - "${FRONTEND_HOST_PORT:-8080}:80"
+    depends_on:
+      - backend
+    networks:
+      - meridian-net
+    healthcheck:
+      # nginx:alpine ships with curl but not wget, so probe with curl.
+      test:     ["CMD-SHELL", "curl -fsS http://localhost/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout:  5s
+      retries:  3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+networks:
+  meridian-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+    driver: local
+  uploads_data:
+    driver: local

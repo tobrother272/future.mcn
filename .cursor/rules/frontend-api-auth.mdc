@@ -1,0 +1,59 @@
+---
+description: Frontend fetch/API call patterns — luôn đính auth headers vào mutation requests
+globs: frontend/src/**/*.{js,jsx,ts,tsx}
+alwaysApply: false
+---
+
+# Frontend API Auth Patterns
+
+## 1. Luôn đính auth headers vào mọi mutation (POST/PUT/DELETE)
+
+Dự án dùng `backendAuthHeaders()` để lấy `X-Meridian-Token`. Không được bỏ sót khi gọi API ghi/xóa.
+
+```js
+// ❌ SAI — DELETE thiếu auth → 401 khi token được bật
+fetch(`/api/store/${key}`, { method: "DELETE" })
+
+// ✅ ĐÚNG
+const authHeaders = backendAuthHeaders();
+fetch(`/api/store/${key}`, { method: "DELETE", headers: authHeaders })
+```
+
+## 2. Bulk/loop DELETE phải tính headers một lần rồi tái dùng
+
+```js
+// ✅ ĐÚNG — gọi backendAuthHeaders() một lần, dùng cho tất cả request
+const authHeaders = backendAuthHeaders();
+await Promise.all(items.map(it =>
+  fetch(`/api/store/${encodeURIComponent(it.key)}`, {
+    method: "DELETE",
+    headers: authHeaders,
+  }).catch(() => {})
+));
+```
+
+## 3. Reset/wipe data phải xóa cả backend lẫn localStorage
+
+Khi wipe dữ liệu: xóa PostgreSQL trước, sau đó mới xóa localStorage.
+Nếu DELETE backend lỗi (401, network) → **không xóa localStorage** để tránh mất đồng bộ.
+
+```js
+// ✅ ĐÚNG
+try {
+  const authHeaders = backendAuthHeaders();
+  const r = await fetch("/api/store");
+  if (r.ok) {
+    const { items } = await r.json();
+    const results = await Promise.allSettled(items.map(it =>
+      fetch(`/api/store/${encodeURIComponent(it.key)}`, { method: "DELETE", headers: authHeaders })
+    ));
+    const anyFailed = results.some(r => r.status === "rejected" || !r.value?.ok);
+    if (anyFailed) throw new Error("Một số key chưa được xóa trên server");
+  }
+} catch (e) {
+  toast(`Lỗi xóa server: ${e.message}`, "error");
+  return; // dừng, không xóa localStorage
+}
+// Chỉ xóa local sau khi server thành công
+Object.values(LS).forEach(k => lsDel(k));
+```

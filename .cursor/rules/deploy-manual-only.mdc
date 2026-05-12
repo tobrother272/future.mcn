@@ -1,0 +1,15 @@
+---
+description: Never deploy to host automatically; only when the user explicitly asks
+alwaysApply: true
+---
+
+# Deploy / release — chỉ khi người dùng yêu cầu
+
+Sau khi code hoặc hoàn tất tính năng trong repo này:
+
+- **Không** tự chạy `scripts/release.ps1`, `release.ps1`, hay bất kỳ pipeline deploy / SSH / `docker compose` lên host / VPS nào.
+- **Không** tự apply migration SQL lên máy chủ production từ đây trừ khi người dùng nói rõ muốn cập nhật host / deploy / migrate remote.
+
+Chỉ chạy các script deploy hoặc thao tác cập nhật host khi người dùng **yêu cầu rõ** (ví dụ: "deploy lên host", "chạy release", "cập nhật lên VPS").
+
+Khi xong task code: có thể nhắc một dòng rằng deploy cần lệnh riêng nếu họ muốn — **không** tự gọi tool shell để deploy.

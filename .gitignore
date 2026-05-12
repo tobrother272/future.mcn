@@ -1,0 +1,36 @@
+# Node / build artifacts
+node_modules/
+dist/
+build/
+*.log
+
+# Local env files — chứa secret, KHÔNG commit
+.env
+.env.local
+.env.*.local
+.env.prod
+.env.production
+
+# API token dev (ad-hoc)
+.api-token
+
+# Deploy automation scratch dir (chứa secrets + helper scripts, KHÔNG commit)
+.deploy/
+.deploy-secrets.txt
+
+# Uploads runtime (chỉ giữ thư mục mẫu trong source)
+backend/uploads/
+uploads/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/settings.example.json
+
+# Tmp / backup
+*.tmp
+.tmp-*
+*.bak
+backups/
