@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "./client";
 
-export type EmployeeRole = "QC" | "Cấp Kênh" | "Kế Toán";
-export const EMPLOYEE_ROLES: EmployeeRole[] = ["QC", "Cấp Kênh", "Kế Toán"];
+export type EmployeeRole = "Admin" | "Cấp Kênh" | "QC" | "Kế Toán";
+export const EMPLOYEE_ROLES: EmployeeRole[] = ["Admin", "Cấp Kênh", "QC", "Kế Toán"];
 
 export interface Employee {
   id: string;
@@ -12,6 +12,7 @@ export interface Employee {
   username: string | null;
   role: EmployeeRole | null;
   status: string;
+  cms_ids: string[];
   contract_count?: number;
   created_at: string;
   updated_at: string;
@@ -25,6 +26,7 @@ export interface EmployeeCreate {
   password?: string;
   role?: EmployeeRole | null;
   status?: string;
+  cms_ids?: string[];
 }
 
 interface EmployeeFilters { status?: string; search?: string; limit?: number; offset?: number }

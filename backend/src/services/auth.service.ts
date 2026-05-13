@@ -105,8 +105,11 @@ export const AuthService = {
 
   /** Login by employee username — employees live in their own table. */
   async loginEmployee(username: string, password: string) {
-    const emp = await queryOne<{ id: string; name: string; username: string; password_hash: string; role: string | null; status: string }>(
-      `SELECT id, name, username, password_hash, role, status FROM employee WHERE username = $1`,
+    const emp = await queryOne<{ id: string; name: string; username: string; password_hash: string; role: string | null; status: string; cms_ids: string[]; created_by: string | null }>(
+      `SELECT id, name, username, password_hash, role, status,
+              COALESCE(cms_ids, '{}') AS cms_ids,
+              created_by
+       FROM employee WHERE username = $1`,
       [username]
     );
     if (!emp) throw new UnauthorizedError("Invalid username or password");
@@ -119,9 +122,11 @@ export const AuthService = {
       username: emp.username,
       role: emp.role ?? "employee",
       userType: "employee",
+      cms_ids: emp.cms_ids,
+      created_by: emp.created_by ?? null,
     });
     return {
-      user: { id: emp.id, name: emp.name, username: emp.username, role: emp.role, status: emp.status, userType: "employee" as const },
+      user: { id: emp.id, name: emp.name, username: emp.username, role: emp.role, status: emp.status, cms_ids: emp.cms_ids, userType: "employee" as const },
       token,
     };
   },

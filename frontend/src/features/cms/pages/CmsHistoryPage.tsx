@@ -10,6 +10,7 @@ import { Button, Card, Modal } from "@/components/ui";
 import { useCms, useCmsRevenue, useImportCmsRevenue } from "@/api/cms.api";
 import { useToast } from "@/stores/notificationStore";
 import { fmtCurrency, fmtDate, fmt } from "@/lib/format";
+import { PERIOD_OPTIONS, periodToParams, todayInputDate, type PeriodKey } from "@/lib/periods";
 
 // ── CSV parser for YouTube Studio daily revenue export ───────
 // Columns: Date, Engaged views, Views, Watch time, Avg duration, Estimated partner revenue (USD)
@@ -172,18 +173,21 @@ function ImportRevenueModal({ open, onClose, cmsId }: { open: boolean; onClose: 
   );
 }
 
-const PERIOD_OPTIONS = [{ label: "30 ngày", days: 30 }, { label: "90 ngày", days: 90 }, { label: "365 ngày", days: 365 }];
-
 type RevRow = { snapshot_date: string; revenue: number; views: number; engaged_views?: number; watch_time_hours?: number };
 
 export default function CmsHistoryPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [days, setDays] = useState(30);
+  const [period, setPeriod] = useState<PeriodKey>("30");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState(todayInputDate());
   const [importOpen, setImportOpen] = useState(false);
 
+  const params = fromDate && toDate
+    ? { from: fromDate, to: toDate }
+    : periodToParams(period);
   const { data: cms } = useCms(id!);
-  const { data: rawHistory, isLoading } = useCmsRevenue(id!, days);
+  const { data: rawHistory, isLoading } = useCmsRevenue(id!, params);
   const history = (rawHistory ?? []) as RevRow[];
 
   const chartData = history.map((r) => ({
@@ -207,12 +211,36 @@ export default function CmsHistoryPage() {
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text }}>Lịch sử doanh thu — {cms?.name}</h1>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {PERIOD_OPTIONS.map((opt) => (
-            <Button key={opt.days} size="sm" variant={days === opt.days ? "primary" : "secondary"} onClick={() => setDays(opt.days)}>
+            <Button
+              key={opt.key}
+              size="sm"
+              variant={period === opt.key ? "primary" : "secondary"}
+              onClick={() => {
+                setPeriod(opt.key);
+                setFromDate("");
+              }}
+            >
               {opt.label}
             </Button>
           ))}
+          <input
+            type="date"
+            value={fromDate}
+            max={toDate || undefined}
+            onChange={(e) => setFromDate(e.target.value)}
+            style={{ height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, padding: "0 8px", fontSize: 12 }}
+            title="Từ ngày"
+          />
+          <input
+            type="date"
+            value={toDate}
+            min={fromDate || undefined}
+            onChange={(e) => setToDate(e.target.value)}
+            style={{ height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, padding: "0 8px", fontSize: 12 }}
+            title="Đến ngày"
+          />
           <Button size="sm" variant="secondary" icon={<Upload size={14} />} onClick={() => setImportOpen(true)}>
             Import CSV
           </Button>
@@ -249,14 +277,14 @@ export default function CmsHistoryPage() {
       <Card padding="20px" style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 16 }}>Doanh thu theo ngày</div>
         {isLoading ? (
-          <div style={{ height: 280, display: "flex", alignItems: "center", justifyContent: "center", color: C.textSub }}>Đang tải...</div>
+          <div style={{ height: 360, display: "flex", alignItems: "center", justifyContent: "center", color: C.textSub }}>Đang tải...</div>
         ) : chartData.length === 0 ? (
-          <div style={{ height: 280, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.textMuted, gap: 8 }}>
+          <div style={{ height: 360, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.textMuted, gap: 8 }}>
             <div style={{ fontSize: 14 }}>Chưa có dữ liệu analytics</div>
             <div style={{ fontSize: 12 }}>Dữ liệu sẽ xuất hiện sau khi sync qua Public API</div>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={280}>
+          <ResponsiveContainer width="100%" height={360}>
             <LineChart data={chartData} margin={{ top: 5, right: 40, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: C.textMuted }} tickLine={false} />
@@ -283,7 +311,7 @@ export default function CmsHistoryPage() {
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, fontSize: 13, fontWeight: 600, color: C.text }}>
           Chi tiết theo ngày
         </div>
-        <div style={{ maxHeight: 420, overflowY: "auto" }}>
+        <div style={{ overflowY: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead style={{ position: "sticky", top: 0, background: C.bgHover }}>
               <tr>

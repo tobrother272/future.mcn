@@ -6,25 +6,34 @@ import { requireAuth } from "../middleware/auth.js";
 const router = Router();
 router.use(requireAuth);
 
-const ROLES = ["QC", "Cấp Kênh", "Kế Toán"] as const;
+const ROLES = ["Admin", "Cấp Kênh", "QC", "Kế Toán"] as const;
 
 const bodySchema = z.object({
   name:     z.string().min(1),
   email:    z.string().email().or(z.literal("")).optional(),
   phone:    z.string().optional(),
   username: z.string().min(1).optional().nullable(),
-  password: z.string().min(6).optional(),   // only used for create / explicit change
+  password: z.string().min(6).optional(),
   role:     z.enum(ROLES).optional().nullable(),
   status:   z.enum(["Active", "Inactive"]).default("Active"),
+  cms_ids:  z.array(z.string()).optional().default([]),
 });
 
 router.get("/", async (req, res, next) => {
   try {
+    const user = req.user;
+    // Admin employee chỉ thấy nhân viên do mình tạo
+    const created_by =
+      user?.userType === "employee" && user.role === "Admin"
+        ? user.id
+        : undefined;
+
     res.json(await EmployeeService.list({
-      status: req.query.status as string | undefined,
-      search: req.query.search as string | undefined,
-      limit:  req.query.limit  ? Number(req.query.limit)  : 100,
-      offset: req.query.offset ? Number(req.query.offset) : 0,
+      status:     req.query.status as string | undefined,
+      search:     req.query.search as string | undefined,
+      limit:      req.query.limit  ? Number(req.query.limit)  : 100,
+      offset:     req.query.offset ? Number(req.query.offset) : 0,
+      created_by,
     }));
   } catch (e) { next(e); }
 });
@@ -36,7 +45,24 @@ router.get("/:id", async (req, res, next) => {
 router.post("/", async (req, res, next) => {
   try {
     const data = bodySchema.parse(req.body);
-    res.status(201).json(await EmployeeService.create(data as Parameters<typeof EmployeeService.create>[0]));
+    const user = req.user;
+    const isAdminEmployee = user?.userType === "employee" && user.role === "Admin";
+
+    // Admin employee không được tạo nhân viên có role Admin
+    if (isAdminEmployee && data.role === "Admin") {
+      const { ForbiddenError } = await import("../lib/errors.js");
+      return next(new ForbiddenError("Admin không có quyền tạo nhân viên role Admin"));
+    }
+
+    // Ghi nhận ai tạo ra nhân viên này
+    const created_by = user?.userType === "employee" ? user.id : null;
+
+    res.status(201).json(await EmployeeService.create({
+      ...data,
+      username: data.username ?? undefined,
+      role:     data.role     ?? undefined,
+      created_by,
+    }));
   } catch (e) { next(e); }
 });
 

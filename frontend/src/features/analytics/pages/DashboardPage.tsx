@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from "recharts";
 import {
@@ -11,9 +12,9 @@ import {
 } from "lucide-react";
 import { C, RADIUS, SHADOW } from "@/styles/theme";
 import { Button, Pill } from "@/components/ui";
-import { useCmsList, useCmsStats } from "@/api/cms.api";
+import { useCmsList } from "@/api/cms.api";
 import { useChannelList } from "@/api/channels.api";
-import { useRevenueBreakdown, useSnapshotAll } from "@/api/revenue.api";
+import { useRevenueBreakdown, useRevenueSystemDaily, useSnapshotAll } from "@/api/revenue.api";
 import { usePartnerList } from "@/api/partners.api";
 import { useViolationList } from "@/api/violations.api";
 import { useSubmissionList } from "@/api/submissions.api";
@@ -22,6 +23,7 @@ import { useToast } from "@/stores/notificationStore";
 import { useQueries } from "@tanstack/react-query";
 import { apiClient } from "@/api/client";
 import type { CmsStats } from "@/types/cms";
+import type { Channel } from "@/types/channel";
 
 // ── Helpers ───────────────────────────────────────────────────
 const NOW = new Date();
@@ -45,6 +47,8 @@ const WORKFLOW_CFG: Record<string, { label: string; color: string }> = {
   PROVISIONING_FAILED: { label: "Tạo kênh lỗi",   color: C.red },
   ACTIVE:              { label: "Hoạt động",       color: C.green },
 };
+
+const PIE_COLORS = [C.amber, C.blue, C.cyan, C.purple, C.teal, C.green, C.orange, C.red];
 
 // ── KPI card ──────────────────────────────────────────────────
 function KpiCard({
@@ -115,10 +119,8 @@ function ViolationRow({ v, onClick }: { v: ReturnType<typeof useViolationList>["
   );
 }
 
-// ── CMS stats row in table ─────────────────────────────────────
-function CmsStatsRow({ cmsId, cmsName, currency, onClick }: { cmsId: string; cmsName: string; currency: string; onClick: () => void }) {
-  const { data: s } = useCmsStats(cmsId);
-  const pct = s && s.total_channels > 0 ? Math.round((s.monetized / s.total_channels) * 100) : 0;
+// ── Top channel row ─────────────────────────────────────────────
+function TopChannelRow({ channel, onClick }: { channel: Channel; onClick: () => void }) {
   return (
     <tr onClick={onClick} style={{ borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}
       onMouseEnter={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = C.bgHover)}
@@ -126,34 +128,32 @@ function CmsStatsRow({ cmsId, cmsName, currency, onClick }: { cmsId: string; cms
       <td style={{ padding: "11px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div style={{ width: 28, height: 28, borderRadius: 7, background: `${C.blue}20`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Server size={12} color={C.blue} />
+            <Tv size={12} color={C.blue} />
           </div>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{cmsName}</div>
-            <div style={{ fontSize: 10, color: C.textMuted, fontFamily: "monospace" }}>{cmsId}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.text, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {channel.name}
+            </div>
+            <div style={{ fontSize: 10, color: C.textMuted, fontFamily: "monospace" }}>{channel.yt_id ?? channel.id}</div>
           </div>
         </div>
       </td>
-      <td style={{ padding: "11px 16px", textAlign: "right" }}>
-        <span style={{ fontSize: 13, color: C.text }}>{fmt(s?.total_channels)}</span>
+      <td style={{ padding: "11px 16px", color: C.textSub }}>
+        {channel.cms_name ?? "—"}
+      </td>
+      <td style={{ padding: "11px 16px", color: C.textMuted }}>
+        {channel.partner_name ?? "—"}
       </td>
       <td style={{ padding: "11px 16px", textAlign: "right" }}>
-        <span style={{ fontSize: 13, color: C.amber, fontWeight: 700 }}>{fmtCurrency(s?.total_monthly_revenue, currency)}</span>
+        <span style={{ fontSize: 13, color: C.amber, fontWeight: 700 }}>{fmtCurrency(channel.monthly_revenue)}</span>
       </td>
       <td style={{ padding: "11px 16px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ flex: 1, height: 5, background: C.border, borderRadius: 3 }}>
-            <div style={{ width: `${pct}%`, height: "100%", background: C.green, borderRadius: 3 }} />
-          </div>
-          <span style={{ fontSize: 11, color: C.textMuted, width: 32, textAlign: "right" }}>{pct}%</span>
-        </div>
+        <Pill color={channel.monetization === "On" ? "green" : "red"}>{channel.monetization}</Pill>
       </td>
       <td style={{ padding: "11px 16px" }}>
-        {s && s.demonetized > 0 ? (
-          <span style={{ fontSize: 11, color: C.red, background: `${C.red}18`, padding: "2px 8px", borderRadius: RADIUS.full }}>{s.demonetized} demo</span>
-        ) : (
-          <span style={{ fontSize: 11, color: C.green }}>✓</span>
-        )}
+        <Pill color={channel.status === "Active" ? "green" : channel.status === "Suspended" ? "yellow" : "red"}>
+          {channel.status}
+        </Pill>
       </td>
     </tr>
   );
@@ -183,16 +183,28 @@ export default function DashboardPage() {
   const navigate  = useNavigate();
   const toast     = useToast();
   const snapshot  = useSnapshotAll();
+  const [revenueView, setRevenueView] = useState<"cms" | "partner">("cms");
 
   const { data: cmsData, refetch: refetchCms }    = useCmsList();
+  const { data: allChannelsData } = useChannelList({ page: 1, limit: 1 });
+  const { data: monetizedChannelsData } = useChannelList({ page: 1, limit: 1, monetization: "On" });
+  const { data: topChannelsData, isLoading: topChannelsLoading } = useChannelList({
+    page: 1, limit: 10, sortBy: "monthly_revenue", sortDir: "desc",
+  });
   const { data: partnersData }  = usePartnerList({ limit: 1 });
   const { data: violationsData } = useViolationList({ limit: 6, result: "" });
-  const { data: breakdown }     = useRevenueBreakdown("cms", 30);
+  const { data: breakdownCms } = useRevenueBreakdown("cms", 30);
+  const { data: breakdownPartner } = useRevenueBreakdown("partner", 30);
+  const { data: systemDaily }   = useRevenueSystemDaily(30);
   const { data: submissions }   = useSubmissionList({ limit: 50 });
 
   const cmsList = cmsData?.items ?? [];
+  const topChannels = topChannelsData?.items ?? [];
   const cmsIds  = cmsList.map((c) => c.id);
   const aggStats = useAllCmsStats(cmsIds);
+  const totalChannelsAll = allChannelsData?.total ?? aggStats.totalChannels;
+  const monetizedAll = monetizedChannelsData?.total ?? aggStats.monetized;
+  const demonetizedAll = Math.max(0, totalChannelsAll - monetizedAll);
 
   const totalPartners   = partnersData?.total ?? 0;
   const activeViolations= (violationsData?.items ?? []).filter((v) => v.result === "Không thực hiện");
@@ -205,17 +217,33 @@ export default function DashboardPage() {
   const pendingQc    = (subCounts["SUBMITTED"] ?? 0) + (subCounts["QC_REVIEWING"] ?? 0);
   const pendingProv  = subCounts["QC_APPROVED"] ?? 0;
 
-  type BreakdownRow = { name: string; revenue: number; views: number };
-  const breakdownRows = (breakdown as BreakdownRow[] | undefined) ?? [];
-  const barData = breakdownRows
-    .map((r) => ({ name: r.name.length > 12 ? r.name.slice(0, 12) + "…" : r.name, revenue: Number(r.revenue) }))
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 9);
+  const systemDailyData = (systemDaily ?? []).map((r) => ({
+    date: fmtDate(r.snapshot_date),
+    revenue: Number(r.revenue ?? 0),
+  }));
+  type BreakdownRow = { name: string; revenue: number };
+  const breakdownRowsRaw = (revenueView === "cms" ? breakdownCms : breakdownPartner) as BreakdownRow[] | undefined;
+  const mergedByName = new Map<string, number>();
+  (breakdownRowsRaw ?? []).forEach((r) => {
+    const key = r.name ?? "—";
+    mergedByName.set(key, (mergedByName.get(key) ?? 0) + Number(r.revenue ?? 0));
+  });
+  const revenueByNet = Array.from(mergedByName.entries())
+    .map(([name, revenue]) => ({ name, revenue }))
+    .map((r) => ({ name: r.name, revenue: Number(r.revenue ?? 0) }))
+    .filter((r) => r.revenue > 0)
+    .sort((a, b) => b.revenue - a.revenue);
+  const topNets = revenueByNet.slice(0, 7);
+  const otherRevenue = revenueByNet.slice(7).reduce((s, x) => s + x.revenue, 0);
+  const pieData = otherRevenue > 0
+    ? [...topNets, { name: "Khác", revenue: otherRevenue }]
+    : topNets;
+  const totalPieRevenue = pieData.reduce((s, x) => s + x.revenue, 0);
 
   // Pie chart: monetization breakdown
   const monoData = [
-    { name: "On",  value: aggStats.monetized,   color: C.green },
-    { name: "Off", value: aggStats.demonetized, color: C.red   },
+    { name: "On",  value: monetizedAll,   color: C.green },
+    { name: "Off", value: demonetizedAll, color: C.red   },
   ].filter((d) => d.value > 0);
 
   // Submission pipeline pie
@@ -286,7 +314,7 @@ export default function DashboardPage() {
       {/* ── KPI strip ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(175px, 1fr))", gap: 14, marginBottom: 24 }}>
         <KpiCard label="CMS Accounts"    value={String(cmsList.length)} icon={<Server size={16} />}     color={C.blue}   sub={`${cmsList.filter((c) => c.status === "Active").length} active`}       onClick={() => navigate("/cms")} />
-        <KpiCard label="Tổng kênh"        value={fmt(aggStats.totalChannels)} icon={<Tv size={16} />}    color={C.cyan}   sub={`${fmt(aggStats.monetized)} monetized`}                                   onClick={() => navigate("/channels")} />
+        <KpiCard label="Tổng kênh"        value={fmt(totalChannelsAll)} icon={<Tv size={16} />}           color={C.cyan}   sub={`${fmt(monetizedAll)} monetized`}                                         onClick={() => navigate("/channels")} />
         <KpiCard label="Đối tác"          value={fmt(totalPartners)}    icon={<Users size={16} />}        color={C.purple} sub="đang hợp tác"                                                             onClick={() => navigate("/partners")} />
         <KpiCard label="Doanh thu tháng"  value={fmtCurrency(aggStats.totalRevenue)} icon={<DollarSign size={16} />} color={C.amber} sub="tổng tất cả CMS" />
         <KpiCard label="Vi phạm mở"       value={String(activeViolations.length)} icon={<AlertTriangle size={16} />} color={activeViolations.length > 0 ? C.red : C.green} sub={criticalCount > 0 ? `${criticalCount} critical` : "không có critical"} onClick={() => navigate("/compliance")} />
@@ -296,27 +324,25 @@ export default function DashboardPage() {
       {/* ── Row 2: chart + violations ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 16, marginBottom: 20 }}>
 
-        {/* Revenue bar chart */}
+        {/* Revenue daily line chart */}
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.md, padding: "18px 20px", boxShadow: SHADOW.sm }}>
           <SectionHeader
-            title="Doanh thu theo CMS (30 ngày)"
+            title="Doanh thu toàn hệ thống (30 ngày)"
             action={<Button variant="ghost" size="sm" icon={<ArrowRight size={12} />} onClick={() => navigate("/revenue")}>Chi tiết</Button>}
           />
-          {barData.length > 0 ? (
+          {systemDailyData.length > 0 ? (
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={barData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+              <LineChart data={systemDailyData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={`${C.border}80`} vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: C.textMuted }} tickLine={false} axisLine={false} />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: C.textMuted }} tickLine={false} axisLine={false} />
                 <YAxis tick={{ fontSize: 10, fill: C.textMuted }} tickLine={false} axisLine={false}
                   tickFormatter={(v: number) => v >= 1000 ? `$${(v/1000).toFixed(0)}K` : `$${v}`} />
                 <Tooltip
                   contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
                   formatter={(v: number) => [fmtCurrency(v), "Revenue"]}
                 />
-                <Bar dataKey="revenue" fill={C.blue} radius={[5, 5, 0, 0]}>
-                  {barData.map((_, i) => <Cell key={i} fill={i === 0 ? C.amber : i === 1 ? C.blue : C.cyan} />)}
-                </Bar>
-              </BarChart>
+                <Line type="monotone" dataKey="revenue" stroke={C.amber} strokeWidth={2.5} dot={false} name="Revenue" />
+              </LineChart>
             </ResponsiveContainer>
           ) : (
             <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: 13 }}>
@@ -325,24 +351,77 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Active Violations */}
+        {/* Revenue performance by net */}
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.md, boxShadow: SHADOW.sm }}>
           <div style={{ padding: "16px 16px 0" }}>
             <SectionHeader
-              title="Vi phạm cần xử lý"
-              action={<Button variant="ghost" size="sm" icon={<ArrowRight size={12} />} onClick={() => navigate("/compliance")}>Tất cả</Button>}
+              title={revenueView === "cms" ? "Hiệu suất doanh thu theo net" : "Hiệu suất doanh thu theo đối tác"}
+              action={<Button variant="ghost" size="sm" icon={<ArrowRight size={12} />} onClick={() => navigate("/revenue")}>Chi tiết</Button>}
             />
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              <Button
+                size="sm"
+                variant={revenueView === "cms" ? "primary" : "secondary"}
+                onClick={() => setRevenueView("cms")}
+              >
+                Theo CMS (net)
+              </Button>
+              <Button
+                size="sm"
+                variant={revenueView === "partner" ? "primary" : "secondary"}
+                onClick={() => setRevenueView("partner")}
+              >
+                Theo đối tác
+              </Button>
+            </div>
           </div>
-          {activeViolations.length === 0 ? (
+          {pieData.length === 0 ? (
             <div style={{ padding: "32px 16px", textAlign: "center" }}>
-              <CheckCircle2 size={28} color={C.green} style={{ marginBottom: 8 }} />
-              <div style={{ fontSize: 13, color: C.textSub }}>Không có vi phạm nào đang mở</div>
+              <div style={{ fontSize: 13, color: C.textSub }}>Chưa có dữ liệu doanh thu theo net</div>
             </div>
           ) : (
-            <div>
-              {activeViolations.slice(0, 6).map((v) => (
-                <ViolationRow key={v.id} v={v as Parameters<typeof ViolationRow>[0]["v"]} onClick={() => navigate("/compliance")} />
-              ))}
+            <div style={{ padding: "0 14px 14px" }}>
+              <ResponsiveContainer width="100%" height={190}>
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    dataKey="revenue"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={46}
+                    outerRadius={72}
+                    paddingAngle={2}
+                  >
+                    {pieData.map((_, i) => (
+                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                    labelStyle={{ color: C.text }}
+                    itemStyle={{ color: C.text }}
+                    formatter={(v: number, _name: string, item: { payload?: { name?: string } }) => [
+                      fmtCurrency(v),
+                      item?.payload?.name ?? "CMS",
+                    ]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+                {pieData.slice(0, 5).map((row, i) => {
+                  const pct = totalPieRevenue > 0 ? (row.revenue / totalPieRevenue) * 100 : 0;
+                  return (
+                    <div key={row.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: PIE_COLORS[i % PIE_COLORS.length], flexShrink: 0 }} />
+                        <span style={{ fontSize: 11, color: C.textSub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.name}</span>
+                      </div>
+                      <span style={{ fontSize: 11, color: C.textMuted, flexShrink: 0 }}>{pct.toFixed(1)}%</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -351,36 +430,38 @@ export default function DashboardPage() {
       {/* ── Row 3: CMS table + pie charts ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 16, marginBottom: 20 }}>
 
-        {/* CMS stats table */}
+        {/* Top channels by revenue table */}
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.md, overflow: "hidden", boxShadow: SHADOW.sm }}>
           <div style={{ padding: "16px 16px 0" }}>
             <SectionHeader
-              title="Hiệu suất từng CMS"
-              action={<Button variant="ghost" size="sm" icon={<ArrowRight size={12} />} onClick={() => navigate("/cms")}>Quản lý</Button>}
+              title="Top 10 channel doanh thu cao nhất"
+              action={<Button variant="ghost" size="sm" icon={<ArrowRight size={12} />} onClick={() => navigate("/channels")}>Quản lý</Button>}
             />
           </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: C.bg }}>
-                {["CMS", "Kênh", "Doanh thu", "Monetize %", "Alert"].map((h) => (
-                  <th key={h} style={{ padding: "8px 16px", textAlign: h === "CMS" ? "left" : "right", fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: ".05em" }}>
-                    {h}
-                  </th>
+          {topChannelsLoading ? (
+            <div style={{ padding: 20, color: C.textMuted, fontSize: 13 }}>Đang tải...</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: C.bg }}>
+                  {["Channel", "CMS", "Đối tác", "Doanh thu", "Monetize", "Status"].map((h) => (
+                    <th key={h} style={{ padding: "8px 16px", textAlign: h === "Doanh thu" ? "right" : "left", fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: ".05em" }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {topChannels.map((ch) => (
+                  <TopChannelRow
+                    key={ch.id}
+                    channel={ch}
+                    onClick={() => navigate(`/channels/${ch.id}`)}
+                  />
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {cmsList.map((cms) => (
-                <CmsStatsRow
-                  key={cms.id}
-                  cmsId={cms.id}
-                  cmsName={cms.name}
-                  currency={cms.currency}
-                  onClick={() => navigate(`/cms/${cms.id}`)}
-                />
-              ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          )}
         </div>
 
         {/* Pie charts stacked */}
@@ -470,8 +551,8 @@ export default function DashboardPage() {
       {/* ── Row 5: Bottom stats ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 16 }}>
         {[
-          { icon: <Tv size={14} color={C.green} />,        label: "Monetize On",  value: fmt(aggStats.monetized),   color: C.green  },
-          { icon: <Tv size={14} color={C.red} />,          label: "Monetize Off", value: fmt(aggStats.demonetized), color: C.red    },
+          { icon: <Tv size={14} color={C.green} />,        label: "Monetize On",  value: fmt(monetizedAll),   color: C.green  },
+          { icon: <Tv size={14} color={C.red} />,          label: "Monetize Off", value: fmt(demonetizedAll), color: C.red    },
           { icon: <Users size={14} color={C.purple} />,    label: "Subscribers", value: fmt(aggStats.totalSubscribers), color: C.purple },
           { icon: <Clock size={14} color={C.amber} />,     label: "QC chờ duyệt",value: String(pendingQc),         color: C.amber  },
         ].map(({ icon, label, value, color }) => (

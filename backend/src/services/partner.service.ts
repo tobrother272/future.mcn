@@ -1,5 +1,5 @@
 import { query, queryOne, queryMany } from "../db/helpers.js";
-import { NotFoundError, ConflictError } from "../lib/errors.js";
+import { NotFoundError, ConflictError, ForbiddenError } from "../lib/errors.js";
 import { nanoid } from "../lib/nanoid.js";
 import { hashPassword } from "../lib/password.js";
 
@@ -131,7 +131,8 @@ export const PartnerService = {
          WHERE account_type='partner' AND partner_id=$1`, [id]
       ),
       queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(monthly_revenue),0)::text AS total FROM channel WHERE partner_id=$1`, [id]
+        `SELECT COALESCE(SUM(monthly_revenue),0)::text AS total
+         FROM channel WHERE partner_id IN (SELECT id FROM partner WHERE id=$1 OR parent_id=$1)`, [id]
       ),
       queryMany<Partner>(
         `SELECT p.*, pp.name AS parent_name FROM partner p LEFT JOIN partner pp ON p.parent_id = pp.id WHERE p.parent_id=$1 ORDER BY p.name`, [id]
@@ -235,5 +236,141 @@ export const PartnerService = {
       [id]
     );
     return { healed: res.rowCount ?? 0 };
+  },
+
+  // ─────────────────────────────────────────────────────────────
+  // Sub-accounts: parent partner manages 1 account per child partner
+  // ─────────────────────────────────────────────────────────────
+
+  /** List child partners + (optional) attached account info. */
+  async listChildPartnersWithAccounts(parentPartnerId: string) {
+    return queryMany<{
+      partner_id: string;
+      partner_name: string;
+      partner_status: string;
+      account_id: string | null;
+      account_email: string | null;
+      account_full_name: string | null;
+      account_phone: string | null;
+      account_status: string | null;
+      account_last_login: string | null;
+      account_created_at: string | null;
+    }>(
+      `SELECT p.id           AS partner_id,
+              p.name         AS partner_name,
+              p.status       AS partner_status,
+              a.id           AS account_id,
+              a.email        AS account_email,
+              a.full_name    AS account_full_name,
+              a.phone        AS account_phone,
+              a.status       AS account_status,
+              a.last_login   AS account_last_login,
+              a.created_at   AS account_created_at
+       FROM partner p
+       LEFT JOIN account a
+         ON a.account_type = 'partner'
+        AND a.partner_id   = p.id
+       WHERE p.parent_id = $1
+       ORDER BY p.name ASC`,
+      [parentPartnerId]
+    );
+  },
+
+  /** Ensure `childPartnerId` is a direct child of `parentPartnerId`, else 403. */
+  async assertChildOfParent(parentPartnerId: string, childPartnerId: string) {
+    const row = await queryOne<{ id: string }>(
+      `SELECT id FROM partner WHERE id=$1 AND parent_id=$2`,
+      [childPartnerId, parentPartnerId]
+    );
+    if (!row) throw new ForbiddenError("Đối tác con không thuộc đối tác cha hiện tại");
+  },
+
+  /**
+   * Create a partner account that is bound to a specific child partner.
+   * 1-to-1: each child partner can only have a single account.
+   */
+  async createSubAccount(
+    parentPartnerId: string,
+    data: { child_partner_id: string; email: string; full_name: string; phone?: string; password: string }
+  ) {
+    await PartnerService.assertChildOfParent(parentPartnerId, data.child_partner_id);
+
+    const dup = await queryOne(
+      `SELECT id FROM account
+        WHERE account_type='partner' AND partner_id=$1`,
+      [data.child_partner_id]
+    );
+    if (dup) throw new ConflictError("Đối tác con này đã có tài khoản");
+
+    const dupEmail = await queryOne(
+      `SELECT id FROM account WHERE account_type='partner' AND lower(email)=lower($1)`,
+      [data.email]
+    );
+    if (dupEmail) throw new ConflictError("Email đã được đăng ký");
+
+    if (!data.password || data.password.length < 8) {
+      throw new ConflictError("Mật khẩu tối thiểu 8 ký tự");
+    }
+
+    const id = nanoid("PU");
+    const hash = await hashPassword(data.password);
+    return queryOne<PartnerUser>(
+      `INSERT INTO account (
+         id, account_type, partner_id, email, full_name, phone, password_hash,
+         status, approved_by, approved_at
+       ) VALUES ($1,'partner',$2,$3,$4,$5,$6,'Active',$7,NOW())
+       RETURNING ${PARTNER_USER_COLS}`,
+      [id, data.child_partner_id, data.email.toLowerCase(), data.full_name, data.phone ?? null, hash, parentPartnerId]
+    );
+  },
+
+  /** Make sure `subAccountId` belongs to a direct child of `parentPartnerId`. */
+  async getOwnedSubAccount(parentPartnerId: string, subAccountId: string) {
+    const row = await queryOne<PartnerUser & { parent_id: string | null }>(
+      `SELECT ${PARTNER_USER_COLS}, p.parent_id
+         FROM account a
+         JOIN partner p ON p.id = a.partner_id
+        WHERE a.id = $1
+          AND a.account_type = 'partner'`,
+      [subAccountId]
+    );
+    if (!row) throw new NotFoundError("Sub-account không tồn tại");
+    if (row.parent_id !== parentPartnerId) {
+      throw new ForbiddenError("Tài khoản này không thuộc đối tác con của bạn");
+    }
+    return row;
+  },
+
+  async setSubAccountStatus(parentPartnerId: string, subAccountId: string, status: "Active" | "Suspended") {
+    await PartnerService.getOwnedSubAccount(parentPartnerId, subAccountId);
+    const u = await queryOne<PartnerUser>(
+      `UPDATE account SET status=$1
+        WHERE id=$2 AND account_type='partner'
+        RETURNING ${PARTNER_USER_COLS}`,
+      [status, subAccountId]
+    );
+    return u!;
+  },
+
+  async resetSubAccountPassword(parentPartnerId: string, subAccountId: string, newPassword: string) {
+    if (!newPassword || newPassword.length < 8) {
+      throw new ConflictError("Mật khẩu tối thiểu 8 ký tự");
+    }
+    await PartnerService.getOwnedSubAccount(parentPartnerId, subAccountId);
+    const hash = await hashPassword(newPassword);
+    await query(
+      `UPDATE account SET password_hash=$1 WHERE id=$2 AND account_type='partner'`,
+      [hash, subAccountId]
+    );
+    return { ok: true };
+  },
+
+  async deleteSubAccount(parentPartnerId: string, subAccountId: string) {
+    await PartnerService.getOwnedSubAccount(parentPartnerId, subAccountId);
+    await query(
+      `DELETE FROM account WHERE id=$1 AND account_type='partner'`,
+      [subAccountId]
+    );
+    return { ok: true };
   },
 };

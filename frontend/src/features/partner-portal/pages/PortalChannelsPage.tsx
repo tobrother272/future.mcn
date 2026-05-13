@@ -1,124 +1,139 @@
 ﻿import { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Tv2, ChevronDown, ChevronRight, Search, RefreshCw,
-  Users, Eye, DollarSign, AlertTriangle, Building2,
+  Users, Eye, DollarSign, Building2, Tag,
 } from "lucide-react";
 import { C, RADIUS, SHADOW } from "@/styles/theme";
-import { Pill, Button } from "@/components/ui";
+import { Pill, Button, StatusDot } from "@/components/ui";
 import { useAuthStore } from "@/stores/authStore";
 import { useChannelList } from "@/api/channels.api";
 import { usePartnerProfile } from "@/api/partners.api";
 import { fmtCurrency, fmt } from "@/lib/format";
 import type { Channel } from "@/types/channel";
-import type { Partner } from "@/types/partner";
 
-// ── Color maps ────────────────────────────────────────────────
-const STATUS_COLOR: Record<string, "green"|"red"|"gray"|"amber"> = {
-  Active: "green", Suspended: "red", Terminated: "red", Pending: "amber",
-};
-const MONO_COLOR: Record<string, "green"|"red"|"gray"|"amber"> = {
-  On: "green", Off: "red",
-};
+const COL_HEADERS = [
+  "Channel", "Topic", "Partner", "Status", "Monetization",
+  "Link Date", "Copyright", "Video", "Total Views", "Subscribers",
+  "Revenue", "Last Revenue",
+] as const;
 
-// ── Channel row ───────────────────────────────────────────────
+// ── Channel table row ───────────────────────────────────────
 function ChannelRow({ ch }: { ch: Channel }) {
+  const navigate = useNavigate();
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "2fr 100px 120px 90px 90px 90px 60px",
-        gap: 8, alignItems: "center",
-        padding: "10px 16px 10px 40px",
-        borderBottom: `1px solid ${C.border}`,
-        transition: "background .12s",
-      }}
-      onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.background = C.bgHover)}
-      onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.background = "transparent")}
+    <tr
+      onClick={() => navigate(`/portal/channels/${ch.id}`)}
+      title="Xem lịch sử doanh thu chi tiết"
+      style={{ borderBottom: `1px solid ${C.border}`, cursor: "pointer", transition: "background .12s" }}
+      onMouseEnter={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = C.bgHover)}
+      onMouseLeave={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = "transparent")}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-        <div style={{ width: 26, height: 26, borderRadius: 6, flexShrink: 0, background: `${C.blue}20`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Tv2 size={12} color={C.blue} />
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.name}</div>
-          {ch.yt_id && <div style={{ fontSize: 10, color: C.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.yt_id}</div>}
-        </div>
-      </div>
-      <Pill color={STATUS_COLOR[ch.status] ?? "gray"}>{ch.status}</Pill>
-      <Pill color={MONO_COLOR[ch.monetization] ?? "gray"} style={{ fontSize: 10 }}>{ch.monetization}</Pill>
-      <div style={{ fontSize: 12, color: C.textSub, textAlign: "right" }}>{fmt(ch.subscribers)}</div>
-      <div style={{ fontSize: 12, color: C.textSub, textAlign: "right" }}>{fmt(ch.monthly_views)}</div>
-      <div style={{ fontSize: 12, color: C.amber, textAlign: "right", fontWeight: 600 }}>{fmtCurrency(ch.monthly_revenue, "USD")}</div>
-      <div style={{ textAlign: "center" }}>
-        {ch.strikes > 0
-          ? <span style={{ fontSize: 11, color: C.red, fontWeight: 600, display: "flex", alignItems: "center", gap: 3, justifyContent: "center" }}><AlertTriangle size={11} />{ch.strikes}</span>
-          : <span style={{ fontSize: 11, color: C.textMuted }}>—</span>}
-      </div>
-    </div>
-  );
-}
-
-// ── Topic group ───────────────────────────────────────────────
-function TopicGroup({ topic, channels }: { topic: string; channels: Channel[] }) {
-  const [open, setOpen] = useState(true);
-  return (
-    <div>
-      <div
-        onClick={() => setOpen((v) => !v)}
-        style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 16px 7px 28px", cursor: "pointer", background: `${C.purple}10`, borderBottom: `1px solid ${C.border}`, transition: "background .12s" }}
-        onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.background = `${C.purple}1e`)}
-        onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.background = `${C.purple}10`)}
-      >
-        {open ? <ChevronDown size={12} color={C.purple} /> : <ChevronRight size={12} color={C.purple} />}
-        <span style={{ fontSize: 11, fontWeight: 600, color: C.purple }}>{topic}</span>
-        <span style={{ fontSize: 10, color: C.textMuted }}>{channels.length} kênh</span>
-      </div>
-      {open && channels.map((ch) => <ChannelRow key={ch.id} ch={ch} />)}
-    </div>
-  );
-}
-
-// ── CMS group ─────────────────────────────────────────────────
-function CmsGroup({ cms, channels }: { cms: string; channels: Channel[] }) {
-  const [open, setOpen] = useState(true);
-  const byTopic = useMemo(() => {
-    const map = new Map<string, Channel[]>();
-    for (const ch of channels) {
-      const t = ch.topic_name ?? "Chưa phân loại";
-      if (!map.has(t)) map.set(t, []);
-      map.get(t)!.push(ch);
-    }
-    return map;
-  }, [channels]);
-
-  return (
-    <div style={{ borderBottom: `1px solid ${C.border}` }}>
-      <div
-        onClick={() => setOpen((v) => !v)}
-        style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 16px", cursor: "pointer", background: `${C.blue}0d`, borderBottom: open ? `1px solid ${C.border}` : "none", transition: "background .12s" }}
-        onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.background = `${C.blue}1a`)}
-        onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.background = `${C.blue}0d`)}
-      >
-        {open ? <ChevronDown size={13} color={C.blue} /> : <ChevronRight size={13} color={C.blue} />}
-        <Tv2 size={13} color={C.blue} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{cms}</span>
-        <span style={{ fontSize: 11, color: C.textMuted }}>{channels.length} kênh</span>
-      </div>
-      {open && (
-        <>
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 100px 120px 90px 90px 90px 60px", gap: 8, padding: "6px 16px 6px 40px", background: C.bg, borderBottom: `1px solid ${C.border}` }}>
-            {["Tên kênh","Trạng thái","Monetization","Subscribers","Views/tháng","Revenue","Strikes"].map((h, i) => (
-              <div key={h} style={{ fontSize: 10, fontWeight: 600, color: C.textMuted, textAlign: i >= 3 ? "right" : "left" }}>{h}</div>
-            ))}
+      {/* Channel */}
+      <td style={{ padding: "10px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{
+            width: 28, height: 28, borderRadius: 6, flexShrink: 0,
+            background: `${C.blue}20`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <Tv2 size={12} color={C.blue} />
           </div>
-          {[...byTopic.entries()].map(([t, chs]) => <TopicGroup key={t} topic={t} channels={chs} />)}
-        </>
-      )}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: C.text, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {ch.name}
+            </div>
+            {ch.yt_id && (
+              <div style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {ch.yt_id}
+              </div>
+            )}
+          </div>
+        </div>
+      </td>
+      {/* Topic */}
+      <td style={{ padding: "10px 16px" }}>
+        {ch.topic_name ? (
+          <span style={{
+            display: "inline-flex", alignItems: "center", gap: 4,
+            fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 5,
+            background: `${C.purple}18`, color: C.purple,
+          }}>
+            <Tag size={10} />{ch.topic_name}
+          </span>
+        ) : (
+          <span style={{ color: C.textMuted, fontSize: 12 }}>—</span>
+        )}
+      </td>
+      {/* Partner */}
+      <td style={{ padding: "10px 16px", color: C.textSub, fontSize: 12 }}>
+        {ch.partner_name ?? "—"}
+      </td>
+      {/* Status */}
+      <td style={{ padding: "10px 16px" }}>
+        <StatusDot status={ch.status} />
+      </td>
+      {/* Monetization */}
+      <td style={{ padding: "10px 16px" }}>
+        <StatusDot status={ch.monetization} />
+      </td>
+      {/* Link Date */}
+      <td style={{ padding: "10px 16px", color: C.textMuted, fontSize: 12, whiteSpace: "nowrap" }}>
+        {ch.link_date ? String(ch.link_date).slice(0, 10) : "—"}
+      </td>
+      {/* Copyright (strikes) */}
+      <td style={{ padding: "6px 8px", textAlign: "center", width: 60 }}>
+        {(ch.strikes ?? 0) > 0
+          ? <span style={{ fontWeight: 600, color: C.red, fontSize: 12 }}>{ch.strikes}</span>
+          : <span style={{ color: C.textMuted, fontSize: 12 }}>0</span>}
+      </td>
+      {/* Video */}
+      <td style={{ padding: "10px 16px", color: C.textSub, textAlign: "right" }}>
+        {fmt(ch.video ?? 0)}
+      </td>
+      {/* Total Views */}
+      <td style={{ padding: "10px 16px", color: C.text, textAlign: "right" }}>
+        {fmt(ch.total_views)}
+      </td>
+      {/* Subscribers */}
+      <td style={{ padding: "10px 16px", color: C.textSub, textAlign: "right" }}>
+        {fmt(ch.subscribers)}
+      </td>
+      {/* Revenue */}
+      <td style={{ padding: "10px 16px", color: C.amber, fontWeight: 600, textAlign: "right" }}>
+        {fmtCurrency(ch.monthly_revenue)}
+      </td>
+      {/* Last Revenue */}
+      <td style={{ padding: "10px 16px", textAlign: "right" }}>
+        {(ch.last_revenue ?? 0) > 0 ? (
+          <span
+            title={ch.last_sync_analytic ? `Last analytic sync: ${new Date(ch.last_sync_analytic).toLocaleString("vi-VN")}` : "Chưa sync analytics"}
+            style={{ fontWeight: 600, color: C.green, cursor: "default", borderBottom: `1px dashed ${C.green}55` }}
+          >
+            {fmtCurrency(ch.last_revenue)}
+          </span>
+        ) : (
+          <span style={{ color: C.textMuted, fontSize: 12 }}
+            title={ch.last_sync_analytic ? `Last analytic sync: ${new Date(ch.last_sync_analytic).toLocaleString("vi-VN")}` : "Chưa sync analytics"}>
+            —
+          </span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+// ── Stat badge in partner header ─────────────────────────────
+function StatBadge({ icon, value, color = C.textSub }: { icon: React.ReactNode; value: string; color?: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      <span style={{ color: C.textMuted }}>{icon}</span>
+      <span style={{ fontSize: 12, color, fontWeight: color === C.amber ? 600 : 400 }}>{value}</span>
     </div>
   );
 }
 
-// ── Partner group (fetch own channels) ───────────────────────
+// ── Partner group (header + table) ───────────────────────────
 function PartnerGroup({
   partnerId, partnerName, tier, type, isChild = false, search,
 }: {
@@ -135,19 +150,11 @@ function PartnerGroup({
     return channels.filter((c) =>
       c.name.toLowerCase().includes(q) ||
       (c.yt_id ?? "").toLowerCase().includes(q) ||
-      (c.cms_name ?? "").toLowerCase().includes(q)
+      (c.cms_name ?? "").toLowerCase().includes(q) ||
+      (c.partner_name ?? "").toLowerCase().includes(q) ||
+      (c.topic_name ?? "").toLowerCase().includes(q)
     );
   }, [channels, search]);
-
-  const byCms = useMemo(() => {
-    const map = new Map<string, Channel[]>();
-    for (const ch of filtered) {
-      const cms = ch.cms_name ?? ch.cms_id ?? "Chưa gán CMS";
-      if (!map.has(cms)) map.set(cms, []);
-      map.get(cms)!.push(ch);
-    }
-    return map;
-  }, [filtered]);
 
   const totalRev  = channels.reduce((s, c) => s + (c.monthly_revenue ?? 0), 0);
   const active    = channels.filter((c) => c.status === "Active").length;
@@ -179,7 +186,7 @@ function PartnerGroup({
             <Building2 size={16} color={accentColor} />
           </div>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{partnerName}</span>
               {isChild && <Pill color="blue" style={{ fontSize: 10 }}>Đối tác con</Pill>}
               {tier && <Pill color="gray" style={{ fontSize: 10 }}>{tier}</Pill>}
@@ -197,27 +204,42 @@ function PartnerGroup({
         </div>
       </div>
 
-      {/* CMS groups */}
+      {/* Table */}
       {open && (
         isLoading ? (
           <div style={{ padding: 20, color: C.textSub, fontSize: 13 }}>Đang tải...</div>
-        ) : byCms.size === 0 ? (
+        ) : filtered.length === 0 ? (
           <div style={{ padding: 20, color: C.textMuted, fontSize: 13, textAlign: "center" }}>
-            {search ? "Không tìm thấy kênh" : "Chưa có kênh nào"}
+            {search ? "Không tìm thấy kênh khớp tìm kiếm" : "Chưa có kênh nào"}
           </div>
         ) : (
-          [...byCms.entries()].map(([cms, chs]) => <CmsGroup key={cms} cms={cms} channels={chs} />)
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1100 }}>
+              <thead>
+                <tr style={{ background: C.bgHover, borderBottom: `1px solid ${C.border}` }}>
+                  {COL_HEADERS.map((h) => (
+                    <th key={h} style={{
+                      padding: h === "Copyright" ? "9px 8px" : "9px 16px",
+                      width: h === "Copyright" ? 70 : undefined,
+                      textAlign:
+                        h === "Copyright" ? "center"
+                        : ["Video", "Total Views", "Subscribers", "Revenue", "Last Revenue"].includes(h) ? "right"
+                        : "left",
+                      fontSize: 11, fontWeight: 600, color: C.textMuted,
+                      whiteSpace: "nowrap", letterSpacing: ".04em",
+                    }}>
+                      {h.toUpperCase()}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((ch) => <ChannelRow key={ch.id} ch={ch} />)}
+              </tbody>
+            </table>
+          </div>
         )
       )}
-    </div>
-  );
-}
-
-function StatBadge({ icon, value, color = C.textSub }: { icon: React.ReactNode; value: string; color?: string }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-      <span style={{ color: C.textMuted }}>{icon}</span>
-      <span style={{ fontSize: 12, color, fontWeight: color === C.amber ? 600 : 400 }}>{value}</span>
     </div>
   );
 }
@@ -226,7 +248,7 @@ function StatBadge({ icon, value, color = C.textSub }: { icon: React.ReactNode; 
 export default function PortalChannelsPage() {
   const user      = useAuthStore((s) => s.user);
   const partnerId = user?.userType === "partner" ? (user.partner_id ?? "") : "";
-  const [search, setSearch]   = useState("");
+  const [search, setSearch] = useState("");
 
   const { data: profile, refetch } = usePartnerProfile(partnerId);
   const children = profile?.children ?? [];
@@ -252,7 +274,7 @@ export default function PortalChannelsPage() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Tìm theo tên kênh, YouTube ID, CMS..."
+          placeholder="Tìm theo tên kênh, YouTube ID, partner, topic..."
           style={{
             width: "100%", paddingLeft: 36, paddingRight: 12, paddingTop: 9, paddingBottom: 9,
             background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm,

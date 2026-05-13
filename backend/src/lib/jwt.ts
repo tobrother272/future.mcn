@@ -10,6 +10,8 @@ export interface JwtPayload {
   role: string;
   userType: "internal" | "partner" | "employee";
   partner_id?: string | null;
+  cms_ids?: string[];
+  created_by?: string | null;
   iat?: number;
   exp?: number;
 }

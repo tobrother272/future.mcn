@@ -18,6 +18,8 @@ interface ChannelFilters {
   search?: string;
   page?: number; limit?: number;
   sortBy?: string; sortDir?: "asc" | "desc";
+  /** Giới hạn chỉ lấy kênh thuộc các CMS này (dùng cho Admin/Cấp Kênh employee). */
+  cms_ids?: string[];
 }
 
 
@@ -27,7 +29,15 @@ export const ChannelService = {
     const vals: unknown[] = [];
     let idx = 1;
 
-    if (filters.cms_id)     { andClauses.push(`c.cms_id=$${idx++}`);         vals.push(filters.cms_id); }
+    // Nếu có cms_ids (scope của employee), ưu tiên dùng thay cho cms_id đơn lẻ
+    if (filters.cms_ids && filters.cms_ids.length > 0) {
+      const placeholders = filters.cms_ids.map(() => `$${idx++}`).join(", ");
+      andClauses.push(`c.cms_id IN (${placeholders})`);
+      vals.push(...filters.cms_ids);
+    } else if (filters.cms_id) {
+      andClauses.push(`c.cms_id=$${idx++}`);
+      vals.push(filters.cms_id);
+    }
     if (filters.partner_id) { andClauses.push(`c.partner_id=$${idx++}`);     vals.push(filters.partner_id); }
     if (filters.topic_id)   { andClauses.push(`c.topic_id=$${idx++}`);       vals.push(filters.topic_id); }
     if (filters.status)     { andClauses.push(`c.status=$${idx++}`);         vals.push(filters.status); }

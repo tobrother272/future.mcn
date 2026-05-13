@@ -11,9 +11,11 @@ type ModalProps = {
   footer?: ReactNode;
   /** Cho phép click ra ngoài để đóng modal. Mặc định true. */
   closeOnOverlay?: boolean;
+  /** Hiển thị toàn màn hình (chiếm gần hết viewport). */
+  fullscreen?: boolean;
 };
 
-export function Modal({ open, onClose, title, children, width = 600, footer, closeOnOverlay = true }: ModalProps) {
+export function Modal({ open, onClose, title, children, width = 600, footer, closeOnOverlay = true, fullscreen = false }: ModalProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     if (open) document.addEventListener("keydown", handler);
@@ -22,6 +24,8 @@ export function Modal({ open, onClose, title, children, width = 600, footer, clo
 
   if (!open) return null;
 
+  const overlayPadding = fullscreen ? 12 : 16;
+
   return (
     <div
       onClick={closeOnOverlay ? onClose : undefined}
@@ -29,7 +33,7 @@ export function Modal({ open, onClose, title, children, width = 600, footer, clo
         position: "fixed", inset: 0, zIndex: 1000,
         background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
         display: "flex", alignItems: "center", justifyContent: "center",
-        padding: 16,
+        padding: overlayPadding,
       }}
     >
       <div
@@ -39,8 +43,10 @@ export function Modal({ open, onClose, title, children, width = 600, footer, clo
           border: `1px solid ${C.border}`,
           borderRadius: RADIUS.xl,
           boxShadow: SHADOW.lg,
-          width, maxWidth: "100%",
-          maxHeight: "90vh",
+          width: fullscreen ? "100%" : width,
+          maxWidth: "100%",
+          height: fullscreen ? "100%" : undefined,
+          maxHeight: fullscreen ? "100%" : "90vh",
           display: "flex", flexDirection: "column",
           overflow: "hidden",
         }}

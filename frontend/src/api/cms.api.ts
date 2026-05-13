@@ -29,10 +29,12 @@ export function useCmsStats(id: string) {
   });
 }
 
-export function useCmsRevenue(id: string, days = 30) {
+export function useCmsRevenue(id: string, opts: { days?: number; from?: string; to?: string } = {}) {
+  const { days = 30, from, to } = opts;
+  const searchParams = from && to ? { from, to } : { days };
   return useQuery({
-    queryKey: ["cms", id, "revenue", days],
-    queryFn: () => apiClient.get(`cms/${id}/revenue`, { searchParams: { days } }).json<RevenueDaily[]>(),
+    queryKey: ["cms", id, "revenue", from && to ? `${from}~${to}` : days],
+    queryFn: () => apiClient.get(`cms/${id}/revenue`, { searchParams }).json<RevenueDaily[]>(),
     enabled: !!id,
   });
 }

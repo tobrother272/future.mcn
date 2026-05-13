@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+﻿import { useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
 import { ChevronLeft, History, Tv, Upload, CheckCircle, AlertCircle, UserCog, Building2, ArrowRightLeft, Tag, Plus, Server, Trash2, Search } from "lucide-react";
@@ -9,6 +9,7 @@ import { useBulkImportChannels, useUpdateChannel, useBulkEditChannels } from "@/
 import { usePartnerList } from "@/api/partners.api";
 import { useToast } from "@/stores/notificationStore";
 import { fmt, fmtCurrency } from "@/lib/format";
+import { usePermissions } from "@/hooks/usePermissions";
 import type { Channel } from "@/types/channel";
 import type { Partner } from "@/types/partner";
 
@@ -553,6 +554,7 @@ export default function CmsDetailPage() {
 
   const clearChannels = useClearCmsChannels(id!);
   const toast = useToast();
+  const { can } = usePermissions();
 
   const { data: cms, isLoading } = useCms(id!);
   const { data: stats } = useCmsStats(id!);
@@ -775,12 +777,16 @@ export default function CmsDetailPage() {
       {(
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-            <Button variant="secondary" size="sm" icon={<Upload size={14} />} onClick={() => setShowImport(true)}>
-              Import CSV
-            </Button>
-            <Button variant="danger" size="sm" icon={<Trash2 size={13} />} onClick={() => setShowClearConfirm(true)}>
-              Xoá tất cả kênh
-            </Button>
+            {can("channel:create") && (
+              <Button variant="secondary" size="sm" icon={<Upload size={14} />} onClick={() => setShowImport(true)}>
+                Import CSV
+              </Button>
+            )}
+            {can("channel:delete") && (
+              <Button variant="danger" size="sm" icon={<Trash2 size={13} />} onClick={() => setShowClearConfirm(true)}>
+                Xoá tất cả kênh
+              </Button>
+            )}
             <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
               {/* Gán chủ đề */}
               <Button

@@ -4,9 +4,10 @@ import {
   Shield, Workflow, Inbox, Settings,
   Brain, LogOut, Server, ChevronLeft, ChevronRight, BookOpen,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { C, FONT_MONO } from "@/styles/theme";
 import { useAuthStore } from "@/stores/authStore";
+import { getAllowedPaths } from "@/lib/permissions";
 
 interface NavItem {
   label: string;
@@ -50,6 +51,34 @@ export function Sidebar() {
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const user = useAuthStore((s) => s.user);
 
+  // Lọc nav items theo role
+  const visibleEntries = useMemo<NavEntry[]>(() => {
+    if (!user) return NAV_ENTRIES;
+    const userType = user.userType;
+    const role     = "role" in user ? user.role : null;
+    const allowed  = getAllowedPaths(userType, role);
+    if (allowed === null) return NAV_ENTRIES; // không giới hạn
+
+    // Chỉ giữ các nav item có path trong danh sách được phép
+    // Divider chỉ giữ nếu còn ít nhất 1 item phía sau nó visible
+    const result: NavEntry[] = [];
+    let pendingDivider: NavDivider | null = null;
+    for (const entry of NAV_ENTRIES) {
+      if ("divider" in entry) {
+        pendingDivider = entry;
+      } else {
+        const ok = allowed.some(
+          (prefix) => entry.path === prefix || entry.path.startsWith(prefix + "/") || prefix.startsWith(entry.path)
+        );
+        if (ok) {
+          if (pendingDivider) { result.push(pendingDivider); pendingDivider = null; }
+          result.push(entry);
+        }
+      }
+    }
+    return result;
+  }, [user]);
+
   const handleLogout = () => {
     clearAuth();
     navigate("/login");
@@ -91,7 +120,7 @@ export function Sidebar() {
 
       {/* Nav items */}
       <nav style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-        {NAV_ENTRIES.map((entry, i) => {
+        {visibleEntries.map((entry, i) => {
           // Divider
           if ("divider" in entry) {
             if (collapsed) return null;

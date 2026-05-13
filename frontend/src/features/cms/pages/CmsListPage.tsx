@@ -5,17 +5,24 @@ import {
   Plus, RefreshCw, Server, Pencil, Trash2, History,
   TrendingUp, Tv, Users, DollarSign, ChevronRight,
   KeyRound, Copy, Check, ShieldOff, ShieldCheck, AlertTriangle,
+  BarChart2,
 } from "lucide-react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Legend,
+} from "recharts";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { C, RADIUS, SHADOW } from "@/styles/theme";
-import { Button, EmptyState, Modal, Field, Input, Select } from "@/components/ui";
+import { Button, EmptyState, Modal, Field, Input, Select, Card } from "@/components/ui";
 import { useCmsList, useCmsStats, useCreateCms, useUpdateCms, useDeleteCms,
-  useCmsApiKeys, useCreateCmsApiKey, useRevokeCmsApiKey } from "@/api/cms.api";
+  useCmsApiKeys, useCreateCmsApiKey, useRevokeCmsApiKey, useCmsRevenue } from "@/api/cms.api";
 import { apiClient } from "@/api/client";
 import { useToast } from "@/stores/notificationStore";
-import { fmtCurrency, fmt } from "@/lib/format";
+import { fmtCurrency, fmt, fmtDate } from "@/lib/format";
+import { usePermissions } from "@/hooks/usePermissions";
+import { PERIOD_OPTIONS, periodToParams, todayInputDate, type PeriodKey } from "@/lib/periods";
 import type { Cms, CmsStats, CmsApiKey } from "@/types/cms";
 
 // ── Schemas ───────────────────────────────────────────────────
@@ -361,14 +368,157 @@ function CmsApiKeysModal({ cms, onClose }: { cms: Cms; onClose: () => void }) {
   );
 }
 
+// ── CMS Analytics Modal ───────────────────────────────────────
+function CmsAnalyticsModal({ cms, onClose }: { cms: Cms; onClose: () => void }) {
+  const [period, setPeriod] = useState<PeriodKey>("30");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState(todayInputDate());
+  const activeParams = fromDate && toDate
+    ? { from: fromDate, to: toDate }
+    : periodToParams(period);
+  const { data: raw = [], isLoading } = useCmsRevenue(cms.id, activeParams);
+
+  const chartData = raw.map((r) => ({
+    date: fmtDate(r.snapshot_date),
+    revenue: Number(r.revenue),
+    views: Number(r.views),
+  }));
+
+  const totalRevenue = raw.reduce((s, r) => s + Number(r.revenue), 0);
+  const totalViews   = raw.reduce((s, r) => s + Number(r.views), 0);
+  const avgChannels  = raw.length
+    ? Math.round(raw.reduce((s, r) => s + (r.channels_count ?? 0), 0) / raw.length)
+    : 0;
+
+  return (
+    <Modal open onClose={onClose} title={`Analytics — ${cms.name}`} fullscreen>
+      {/* Period selector + subtitle */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
+        <span style={{ fontSize: 12, color: C.textMuted }}>
+          Lịch sử doanh thu tổng hợp từ tất cả kênh trong CMS
+        </span>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {PERIOD_OPTIONS.map((opt) => (
+            <Button key={opt.key} size="sm"
+              variant={period === opt.key ? "primary" : "secondary"}
+              onClick={() => {
+                setPeriod(opt.key);
+                setFromDate("");
+              }}>
+              {opt.label}
+            </Button>
+          ))}
+          <input
+            type="date"
+            value={fromDate}
+            max={toDate || undefined}
+            onChange={(e) => setFromDate(e.target.value)}
+            style={{ height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, padding: "0 8px", fontSize: 12 }}
+            title="Từ ngày"
+          />
+          <input
+            type="date"
+            value={toDate}
+            min={fromDate || undefined}
+            onChange={(e) => setToDate(e.target.value)}
+            style={{ height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, padding: "0 8px", fontSize: 12 }}
+            title="Đến ngày"
+          />
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+        {[
+          { label: "Tổng doanh thu",  value: fmtCurrency(totalRevenue, cms.currency), color: C.amber },
+          { label: "Tổng lượt xem",   value: fmt(totalViews),                         color: C.blue },
+          { label: "TB kênh/ngày",    value: String(avgChannels),                      color: C.cyan },
+          { label: "Số ngày có data", value: String(raw.length),                       color: C.text },
+        ].map((k) => (
+          <div key={k.label} style={{ background: C.bgHover, borderRadius: 8, padding: "10px 14px" }}>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 3 }}>{k.label}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: k.color }}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Chart */}
+      <Card padding="16px" style={{ marginBottom: 16 }}>
+        {isLoading ? (
+          <div style={{ height: 320, display: "flex", alignItems: "center", justifyContent: "center", color: C.textSub }}>
+            Đang tải...
+          </div>
+        ) : chartData.length === 0 ? (
+          <div style={{ height: 320, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.textMuted, gap: 8 }}>
+            <BarChart2 size={32} color={C.textMuted} />
+            <div style={{ fontSize: 14 }}>Chưa có dữ liệu analytics</div>
+            <div style={{ fontSize: 12 }}>Import doanh thu từ trang chi tiết CMS</div>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={320}>
+            <LineChart data={chartData} margin={{ top: 4, right: 36, left: 0, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: C.textMuted }} tickLine={false} />
+              <YAxis yAxisId="left" tick={{ fontSize: 9, fill: C.textMuted }} tickLine={false}
+                tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9, fill: C.textMuted }} tickLine={false}
+                tickFormatter={(v: number) => `${(v / 1_000_000).toFixed(1)}M`} />
+              <Tooltip
+                contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                formatter={(value: number, name: string) =>
+                  name === "Revenue" ? [`${cms.currency} ${value.toFixed(3)}`, name] : [fmt(value), name]
+                }
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Line yAxisId="left"  type="monotone" dataKey="revenue" stroke={C.amber} strokeWidth={2} dot={false} name="Revenue" />
+              <Line yAxisId="right" type="monotone" dataKey="views"   stroke={C.blue}  strokeWidth={2} dot={false} name="Views" />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </Card>
+
+      {/* Table */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", borderRadius: 8, border: `1px solid ${C.border}` }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead style={{ position: "sticky", top: 0, background: C.bgHover }}>
+            <tr>
+              {["Ngày", "Revenue", "Views", "Kênh"].map((h) => (
+                <th key={h} style={{ padding: "8px 14px", textAlign: "left", fontSize: 11, color: C.textMuted, fontWeight: 600 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {[...raw].reverse().map((r) => (
+              <tr key={r.snapshot_date} style={{ borderTop: `1px solid ${C.border}` }}>
+                <td style={{ padding: "6px 14px", color: C.textSub }}>{fmtDate(r.snapshot_date)}</td>
+                <td style={{ padding: "6px 14px", color: C.amber, fontWeight: 600 }}>{fmtCurrency(Number(r.revenue), cms.currency)}</td>
+                <td style={{ padding: "6px 14px", color: C.text }}>{fmt(Number(r.views))}</td>
+                <td style={{ padding: "6px 14px", color: C.textMuted }}>{r.channels_count ?? "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {raw.length === 0 && !isLoading && (
+          <div style={{ padding: "20px 14px", textAlign: "center", color: C.textMuted }}>
+            Chưa có dữ liệu trong khoảng thời gian này
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // ── CMS row in table ──────────────────────────────────────────
-function CmsRow({ cms, onEdit, onDelete, onHistory, onOpen, onApiKeys }: {
+function CmsRow({ cms, onEdit, onDelete, onHistory, onAnalytics, onOpen, onApiKeys, showEdit, showDelete }: {
   cms: Cms;
   onEdit: (e: React.MouseEvent) => void;
   onDelete: (e: React.MouseEvent) => void;
   onHistory: (e: React.MouseEvent) => void;
+  onAnalytics: (e: React.MouseEvent) => void;
   onOpen: () => void;
   onApiKeys: (e: React.MouseEvent) => void;
+  showEdit?: boolean;
+  showDelete?: boolean;
 }) {
   const { data: stats } = useCmsStats(cms.id);
 
@@ -448,24 +598,34 @@ function CmsRow({ cms, onEdit, onDelete, onHistory, onOpen, onApiKeys }: {
             onMouseLeave={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.border; el.style.color = C.textMuted; }}>
             <KeyRound size={13} />
           </button>
-          <button onClick={onHistory} title="Lịch sử doanh thu"
+          <button onClick={onAnalytics} title="Analytics — Lịch sử doanh thu"
             style={{ padding: "5px 8px", border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, background: "transparent", cursor: "pointer", color: C.textMuted, display: "flex" }}
             onMouseEnter={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.amber; el.style.color = C.amber; }}
             onMouseLeave={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.border; el.style.color = C.textMuted; }}>
+            <BarChart2 size={13} />
+          </button>
+          <button onClick={onHistory} title="Trang lịch sử chi tiết"
+            style={{ padding: "5px 8px", border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, background: "transparent", cursor: "pointer", color: C.textMuted, display: "flex" }}
+            onMouseEnter={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.cyan; el.style.color = C.cyan; }}
+            onMouseLeave={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.border; el.style.color = C.textMuted; }}>
             <History size={13} />
           </button>
-          <button onClick={onEdit} title="Chỉnh sửa"
-            style={{ padding: "5px 8px", border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, background: "transparent", cursor: "pointer", color: C.textMuted, display: "flex" }}
-            onMouseEnter={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.blue; el.style.color = C.blue; }}
-            onMouseLeave={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.border; el.style.color = C.textMuted; }}>
-            <Pencil size={13} />
-          </button>
-          <button onClick={onDelete} title="Xóa"
-            style={{ padding: "5px 8px", border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, background: "transparent", cursor: "pointer", color: C.textMuted, display: "flex" }}
-            onMouseEnter={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.red; el.style.color = C.red; }}
-            onMouseLeave={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.border; el.style.color = C.textMuted; }}>
-            <Trash2 size={13} />
-          </button>
+          {showEdit !== false && (
+            <button onClick={onEdit} title="Chỉnh sửa"
+              style={{ padding: "5px 8px", border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, background: "transparent", cursor: "pointer", color: C.textMuted, display: "flex" }}
+              onMouseEnter={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.blue; el.style.color = C.blue; }}
+              onMouseLeave={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.border; el.style.color = C.textMuted; }}>
+              <Pencil size={13} />
+            </button>
+          )}
+          {showDelete !== false && (
+            <button onClick={onDelete} title="Xóa"
+              style={{ padding: "5px 8px", border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, background: "transparent", cursor: "pointer", color: C.textMuted, display: "flex" }}
+              onMouseEnter={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.red; el.style.color = C.red; }}
+              onMouseLeave={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = C.border; el.style.color = C.textMuted; }}>
+              <Trash2 size={13} />
+            </button>
+          )}
           <button onClick={onOpen} style={{ padding: "5px 8px", border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, background: "transparent", cursor: "pointer", color: C.textMuted, display: "flex" }}>
             <ChevronRight size={13} />
           </button>
@@ -495,6 +655,8 @@ export default function CmsListPage() {
   const [editingCms, setEditingCms] = useState<Cms | null>(null);
   const [deletingCms, setDeletingCms] = useState<Cms | null>(null);
   const [apiKeysCms, setApiKeysCms] = useState<Cms | null>(null);
+  const [analyticsCms, setAnalyticsCms] = useState<Cms | null>(null);
+  const { can } = usePermissions();
 
   const { data, isLoading, refetch } = useCmsList();
   const cmsList = data?.items ?? [];
@@ -502,9 +664,10 @@ export default function CmsListPage() {
   return (
     <div style={{ padding: "24px 28px" }}>
       <CreateCmsModal open={showCreate} onClose={() => setShowCreate(false)} />
-      {editingCms  && <EditCmsModal      cms={editingCms}  onClose={() => setEditingCms(null)} />}
-      {deletingCms && <DeleteCmsModal    cms={deletingCms} onClose={() => setDeletingCms(null)} />}
-      {apiKeysCms  && <CmsApiKeysModal   cms={apiKeysCms}  onClose={() => setApiKeysCms(null)} />}
+      {editingCms   && <EditCmsModal      cms={editingCms}   onClose={() => setEditingCms(null)} />}
+      {deletingCms  && <DeleteCmsModal    cms={deletingCms}  onClose={() => setDeletingCms(null)} />}
+      {apiKeysCms   && <CmsApiKeysModal   cms={apiKeysCms}   onClose={() => setApiKeysCms(null)} />}
+      {analyticsCms && <CmsAnalyticsModal cms={analyticsCms} onClose={() => setAnalyticsCms(null)} />}
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
@@ -518,7 +681,9 @@ export default function CmsListPage() {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <Button variant="ghost" size="sm" icon={<RefreshCw size={13} />} onClick={() => void refetch()}>Làm mới</Button>
-          <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setShowCreate(true)}>Thêm CMS</Button>
+          {can("cms:create") && (
+            <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setShowCreate(true)}>Thêm CMS</Button>
+          )}
         </div>
       </div>
 
@@ -551,7 +716,10 @@ export default function CmsListPage() {
                   onEdit={(e) => { e.stopPropagation(); setEditingCms(cms); }}
                   onDelete={(e) => { e.stopPropagation(); setDeletingCms(cms); }}
                   onHistory={(e) => { e.stopPropagation(); navigate(`/cms/${String(cms.id)}/history`); }}
+                  onAnalytics={(e) => { e.stopPropagation(); setAnalyticsCms(cms); }}
                   onApiKeys={(e) => { e.stopPropagation(); setApiKeysCms(cms); }}
+                  showEdit={can("cms:edit")}
+                  showDelete={can("cms:delete")}
                 />
               ))}
             </tbody>

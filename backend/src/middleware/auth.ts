@@ -10,6 +10,9 @@ export interface AuthUser {
   role: string;
   userType: "internal" | "partner" | "employee";
   partner_id?: string | null;
+  cms_ids?: string[];
+  /** ID của Admin employee đã tạo user này (dùng để lọc danh sách nhân viên). */
+  created_by?: string | null;
 }
 
 declare global {

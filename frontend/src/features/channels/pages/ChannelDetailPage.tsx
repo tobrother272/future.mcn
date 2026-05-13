@@ -10,6 +10,7 @@ import { Button, Card, Pill, StatusDot, Modal, EmptyState } from "@/components/u
 import { useChannel, useChannelVideos, useImportChannelVideos, useChannelAnalytics } from "@/api/channels.api";
 import { useToast } from "@/stores/notificationStore";
 import { fmt, fmtCurrency, fmtDate } from "@/lib/format";
+import { PERIOD_OPTIONS, periodToParams, todayInputDate, type PeriodKey } from "@/lib/periods";
 
 // ── CSV parser for YouTube Studio video report ────────────────
 // Columns: Video title, Video ID, Views, Watch time (hours), Average view duration, Revenue
@@ -194,20 +195,25 @@ function ImportVideoModal({ open, onClose, channelId }: { open: boolean; onClose
   );
 }
 
-// ── Period options ────────────────────────────────────────────
-const PERIOD_OPTIONS = [{ label: "30 ngày", days: 30 }, { label: "90 ngày", days: 90 }, { label: "365 ngày", days: 365 }];
-
 // ── Main Page ─────────────────────────────────────────────────
 export default function ChannelDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [days, setDays] = useState(30);
+  const [period, setPeriod] = useState<PeriodKey>("30");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState(todayInputDate());
   const [importOpen, setImportOpen] = useState(false);
   const [videoPage, setVideoPage] = useState(0);
   const VIDEO_LIMIT = 50;
+  const params = fromDate && toDate
+    ? { from: fromDate, to: toDate }
+    : periodToParams(period);
+  const selectedPeriodLabel = fromDate && toDate
+    ? `${fromDate} → ${toDate}`
+    : (PERIOD_OPTIONS.find((p) => p.key === period)?.label ?? "30 ngày");
 
   const { data: ch, isLoading } = useChannel(id!);
-  const { data: analytics } = useChannelAnalytics(id!, days);
+  const { data: analytics } = useChannelAnalytics(id!, params);
   const { data: videosData, isLoading: videosLoading } = useChannelVideos(id!, {
     limit: VIDEO_LIMIT,
     offset: videoPage * VIDEO_LIMIT,
@@ -277,7 +283,7 @@ export default function ChannelDetailPage() {
           { label: "Revenue/tháng",value: fmtCurrency(ch.monthly_revenue),color: C.amber },
           { label: "Strikes",      value: String(ch.strikes),             color: ch.strikes > 0 ? C.red : C.green },
           { label: "Videos",       value: String(totalVideos),            color: C.cyan },
-          { label: `Revenue ${days}d`, value: fmtCurrency(totalRevenue),  color: C.amber },
+          { label: `Revenue ${selectedPeriodLabel}`, value: fmtCurrency(totalRevenue), color: C.amber },
         ].map(({ label, value, color }) => (
           <Card key={label} padding="14px 16px">
             <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 3 }}>{label}</div>
@@ -307,12 +313,36 @@ export default function ChannelDetailPage() {
               </div>
             )}
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {PERIOD_OPTIONS.map((opt) => (
-              <Button key={opt.days} size="sm" variant={days === opt.days ? "primary" : "secondary"} onClick={() => setDays(opt.days)}>
+              <Button
+                key={opt.key}
+                size="sm"
+                variant={period === opt.key ? "primary" : "secondary"}
+                onClick={() => {
+                  setPeriod(opt.key);
+                  setFromDate("");
+                }}
+              >
                 {opt.label}
               </Button>
             ))}
+            <input
+              type="date"
+              value={fromDate}
+              max={toDate || undefined}
+              onChange={(e) => setFromDate(e.target.value)}
+              style={{ height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, padding: "0 8px", fontSize: 12 }}
+              title="Từ ngày"
+            />
+            <input
+              type="date"
+              value={toDate}
+              min={fromDate || undefined}
+              onChange={(e) => setToDate(e.target.value)}
+              style={{ height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, padding: "0 8px", fontSize: 12 }}
+              title="Đến ngày"
+            />
           </div>
         </div>
 

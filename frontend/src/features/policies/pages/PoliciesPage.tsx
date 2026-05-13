@@ -651,16 +651,25 @@ function PolicyCard({ policy, onEdit, onDelete }: { policy: Policy; onEdit: () =
 
 // ── Main Page ─────────────────────────────────────────────────
 export default function PoliciesPage() {
-  const [search, setSearch]       = useState("");
-  const [query, setQuery]         = useState("");
+  const [search, setSearch]           = useState("");
+  const [debouncedSearch, setDebounced] = useState("");
   const [topicFilter, setTopicFilter] = useState("");
-  const [page, setPage]           = useState(0);
+  const [page, setPage]               = useState(0);
   const limit = 20;
   const toast = useToast();
   const { data: allTopics = [] }  = useTopics();
 
+  // Debounce 300ms — tự động search khi gõ
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebounced(search.trim());
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
   const { data, isLoading, refetch } = usePolicyList({
-    search:   query || undefined,
+    search:   debouncedSearch || undefined,
     topic_id: topicFilter || undefined,
     limit,
     offset:   page * limit,
@@ -715,20 +724,31 @@ export default function PoliciesPage() {
 
       {/* Search + Topic filter */}
       <div style={{ marginBottom: 16 }}>
-        <form onSubmit={(e) => { e.preventDefault(); setQuery(search); setPage(0); }} style={{ display: "flex", gap: 8, marginBottom: allTopics.length ? 10 : 0 }}>
-          <div style={{ position: "relative", flex: 1, maxWidth: 380 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: allTopics.length ? 10 : 0 }}>
+          <div style={{ position: "relative", flex: 1, maxWidth: 420 }}>
             <Search size={13} color={C.textMuted} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm theo tên chính sách..."
-              style={{ width: "100%", paddingLeft: 34, paddingRight: 12, paddingTop: 8, paddingBottom: 8, background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Tìm theo tên, nội dung, áp dụng…"
+              style={{ width: "100%", paddingLeft: 34, paddingRight: search ? 32 : 12, paddingTop: 8, paddingBottom: 8, background: C.bgCard, border: `1px solid ${debouncedSearch ? C.blue : C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 13, outline: "none", boxSizing: "border-box" }}
+            />
+            {search && (
+              <button
+                onClick={() => { setSearch(""); }}
+                style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.textMuted, display: "flex", padding: 2 }}
+              >
+                <X size={12} />
+              </button>
+            )}
           </div>
-          <Button variant="ghost" size="sm" type="submit">Tìm</Button>
-          {(query || topicFilter) && (
-            <Button variant="ghost" size="sm" icon={<X size={12} />} onClick={() => { setSearch(""); setQuery(""); setTopicFilter(""); setPage(0); }}>
+          {(debouncedSearch || topicFilter) && (
+            <Button variant="ghost" size="sm" icon={<X size={12} />} onClick={() => { setSearch(""); setTopicFilter(""); setPage(0); }}>
               Xóa lọc
             </Button>
           )}
           <span style={{ marginLeft: "auto", fontSize: 12, color: C.textMuted, display: "flex", alignItems: "center" }}>{total} chính sách</span>
-        </form>
+        </div>
 
         {/* Topic filter chips */}
         {allTopics.length > 0 && (
@@ -757,7 +777,7 @@ export default function PoliciesPage() {
         <div style={{ padding: 60, textAlign: "center", background: C.bgCard, borderRadius: RADIUS.md, border: `1px solid ${C.border}` }}>
           <ShieldCheck size={36} color={C.textMuted} style={{ marginBottom: 12 }} />
           <div style={{ color: C.textSub, fontSize: 14, marginBottom: 8 }}>
-            {query ? "Không tìm thấy chính sách phù hợp" : "Chưa có chính sách nào"}
+            {debouncedSearch ? "Không tìm thấy chính sách phù hợp" : "Chưa có chính sách nào"}
           </div>
           <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setModal("create")}>Thêm chính sách đầu tiên</Button>
         </div>

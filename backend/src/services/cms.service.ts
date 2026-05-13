@@ -94,33 +94,41 @@ export const CmsService = {
     return res;
   },
 
-  async getRevenue(id: string, days = 30) {
+  async getRevenue(id: string, opts: { days?: number; from?: string; to?: string } = {}) {
     await CmsService.getById(id);
+    const { days = 30, from, to } = opts;
+    const dateFilter = from && to
+      ? `ca.date >= $2::date AND ca.date <= $3::date`
+      : `ca.date >= CURRENT_DATE - ($2::int)`;
+    const params = from && to ? [id, from, to] : [id, days];
     // Aggregate from channel_analytics for all channels in this CMS
     const rows = await queryMany<{ snapshot_date: string; revenue: number; views: number; engaged_views: number; watch_time_hours: number }>(
       `SELECT
-         ca.date                       AS snapshot_date,
-         SUM(ca.revenue)::float8       AS revenue,
-         SUM(ca.views)::float8         AS views,
-         SUM(ca.engaged_views)::float8 AS engaged_views,
+         ca.date                          AS snapshot_date,
+         SUM(ca.revenue)::float8          AS revenue,
+         SUM(ca.views)::float8            AS views,
+         SUM(ca.engaged_views)::float8    AS engaged_views,
          SUM(ca.watch_time_hours)::float8 AS watch_time_hours
        FROM channel_analytics ca
        WHERE ca.cms_id = $1
-         AND ca.date >= CURRENT_DATE - ($2::int)
+         AND ${dateFilter}
        GROUP BY ca.date
        ORDER BY ca.date ASC`,
-      [id, days]
+      params
     );
     // Fall back to legacy revenue_daily if no channel_analytics data
     if (rows.length > 0) return rows;
+    const legacyFilter = from && to
+      ? `snapshot_date >= $2::date AND snapshot_date <= $3::date`
+      : `snapshot_date >= CURRENT_DATE - ($2::int)`;
     return queryMany(
       `SELECT snapshot_date, revenue::float8 AS revenue, views::float8 AS views,
               0::float8 AS engaged_views, 0::float8 AS watch_time_hours
        FROM revenue_daily
        WHERE scope = 'cms' AND scope_id = $1
-         AND snapshot_date >= CURRENT_DATE - ($2::int)
+         AND ${legacyFilter}
        ORDER BY snapshot_date ASC`,
-      [id, days]
+      params
     );
   },
 

@@ -126,12 +126,17 @@ export interface ChannelAnalyticsResponse {
   items: AnalyticsRow[];
 }
 
-export function useChannelAnalytics(channelId: string, days: number) {
+export function useChannelAnalytics(
+  channelId: string,
+  opts: { days?: number; from?: string; to?: string } = {}
+) {
+  const { days = 30, from, to } = opts;
+  const searchParams = from && to ? { from, to } : { days };
   return useQuery({
-    queryKey: ["channels", channelId, "analytics", days],
+    queryKey: ["channels", channelId, "analytics", from && to ? `${from}~${to}` : days],
     queryFn: () =>
       apiClient
-        .get(`channels/${channelId}/analytics`, { searchParams: { days } })
+        .get(`channels/${channelId}/analytics`, { searchParams })
         .json<ChannelAnalyticsResponse>(),
     enabled: !!channelId,
   });

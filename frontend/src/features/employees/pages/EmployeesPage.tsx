@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import {
   Users, Plus, Search, Pencil, Trash2, FileText, Mail,
   Phone, KeyRound, RefreshCw, ChevronDown, ChevronRight,
-  Shield, UserCheck, UserX, ClipboardList,
+  Shield, UserCheck, UserX, ClipboardList, Monitor, Check,
 } from "lucide-react";
 import { C, RADIUS, SHADOW } from "@/styles/theme";
 import { Button, Pill, Modal } from "@/components/ui";
@@ -14,9 +14,12 @@ import type { Employee, EmployeeRole } from "@/api/employees.api";
 import { useAllContracts } from "@/api/contracts.api";
 import { useToast } from "@/stores/notificationStore";
 import { fmtDate } from "@/lib/format";
+import { useCmsList } from "@/api/cms.api";
+import { useAuthStore } from "@/stores/authStore";
 
 // ── Role config ───────────────────────────────────────────────
-const ROLE_CFG: Record<EmployeeRole, { color: "amber"|"blue"|"green"; label: string }> = {
+const ROLE_CFG: Record<EmployeeRole, { color: "amber"|"blue"|"green"|"red"; label: string }> = {
+  "Admin":    { color: "red",   label: "Admin" },
   "QC":       { color: "amber", label: "QC" },
   "Cấp Kênh": { color: "blue",  label: "Cấp Kênh" },
   "Kế Toán":  { color: "green", label: "Kế Toán" },
@@ -30,6 +33,12 @@ function EmployeeForm({
   const createMut = useCreateEmployee();
   const updateMut = useUpdateEmployee(employee?.id ?? "");
   const isEdit    = !!employee;
+  const currentUser = useAuthStore((s) => s.user);
+  // Admin employee không được tạo nhân viên role Admin
+  const isCurrentAdmin = currentUser?.userType === "employee" && currentUser.role === "Admin";
+  const selectableRoles = isCurrentAdmin
+    ? EMPLOYEE_ROLES.filter((r) => r !== "Admin")
+    : EMPLOYEE_ROLES;
 
   const [form, setForm] = useState({
     name:     employee?.name     ?? "",
@@ -113,7 +122,7 @@ function EmployeeForm({
             <label style={labelStyle}>Vai trò</label>
             <select value={form.role} onChange={set("role")} style={inpStyle}>
               <option value="">— Chọn vai trò —</option>
-              {EMPLOYEE_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+              {selectableRoles.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
         </div>
@@ -162,6 +171,113 @@ function EmployeeForm({
             <option value="Active">Active</option>
             <option value="Inactive">Inactive</option>
           </select>
+        </div>
+
+      </div>
+    </Modal>
+  );
+}
+
+// ── CMS Assign Modal ──────────────────────────────────────────
+function CmsAssignModal({
+  employee, onClose,
+}: { employee: Employee; onClose: () => void }) {
+  const toast = useToast();
+  const updateMut = useUpdateEmployee(employee.id);
+  const { data: cmsData } = useCmsList({ limit: 200 });
+  const cmsList = cmsData?.items ?? [];
+  const [selected, setSelected] = useState<string[]>(employee.cms_ids ?? []);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+
+  const handleSave = async () => {
+    try {
+      await updateMut.mutateAsync({ cms_ids: selected });
+      toast.success("Đã lưu CMS", selected.length === 0 ? "Nhân viên thấy tất cả CMS" : `${selected.length} CMS được gán`);
+      onClose();
+    } catch (err) {
+      toast.error("Lỗi", err instanceof Error ? err.message : "");
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      closeOnOverlay={false}
+      title={`Gán CMS — ${employee.name}`}
+      width={400}
+      footer={
+        <>
+          <Button variant="ghost" size="sm" onClick={onClose}>Hủy</Button>
+          <Button variant="primary" size="sm" loading={updateMut.isPending} onClick={() => void handleSave()}>
+            Lưu
+          </Button>
+        </>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
+          Để trống = nhân viên thấy tất cả CMS. Tick chọn để giới hạn.
+        </div>
+
+        {/* Select all / Clear */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+          <button
+            onClick={() => setSelected(cmsList.map((c) => c.id))}
+            style={{ fontSize: 11, color: C.blue, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+          >
+            Chọn tất cả
+          </button>
+          <span style={{ color: C.textMuted, fontSize: 11 }}>·</span>
+          <button
+            onClick={() => setSelected([])}
+            style={{ fontSize: 11, color: C.textMuted, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+          >
+            Bỏ chọn
+          </button>
+          <span style={{ marginLeft: "auto", fontSize: 11, color: C.textMuted }}>
+            {selected.length === 0 ? "Tất cả" : `${selected.length}/${cmsList.length}`}
+          </span>
+        </div>
+
+        {/* Checklist */}
+        <div style={{ border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, overflow: "hidden" }}>
+          {cmsList.length === 0 ? (
+            <div style={{ padding: "16px", textAlign: "center", color: C.textMuted, fontSize: 12 }}>Đang tải...</div>
+          ) : cmsList.map((cms, i) => {
+            const isChecked = selected.includes(cms.id);
+            return (
+              <div
+                key={cms.id}
+                onClick={() => toggle(cms.id)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "10px 14px", cursor: "pointer",
+                  borderTop: i > 0 ? `1px solid ${C.border}` : "none",
+                  background: isChecked ? `${C.blue}0d` : "transparent",
+                  transition: "background 0.1s",
+                }}
+                onMouseEnter={(e) => { if (!isChecked) (e.currentTarget as HTMLDivElement).style.background = C.bgHover; }}
+                onMouseLeave={(e) => { if (!isChecked) (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
+              >
+                {/* Checkbox */}
+                <div style={{
+                  width: 16, height: 16, borderRadius: 3, flexShrink: 0,
+                  border: `1.5px solid ${isChecked ? C.blue : C.border}`,
+                  background: isChecked ? C.blue : "transparent",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  transition: "all 0.1s",
+                }}>
+                  {isChecked && <Check size={10} color="#fff" strokeWidth={3} />}
+                </div>
+                <span style={{ fontSize: 13, color: isChecked ? C.text : C.textSub, fontWeight: isChecked ? 600 : 400 }}>
+                  {cms.name}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </Modal>
@@ -264,9 +380,10 @@ export default function EmployeesPage() {
   const [search, setSearch]     = useState("");
   const [roleFilter, setRole]   = useState("");
   const [statusFilter, setStatus] = useState("Active");
-  const [showCreate, setCreate] = useState(false);
-  const [editing, setEditing]   = useState<Employee | null>(null);
-  const [detail,  setDetail]    = useState<Employee | null>(null);
+  const [showCreate, setCreate]       = useState(false);
+  const [editing, setEditing]         = useState<Employee | null>(null);
+  const [detail,  setDetail]          = useState<Employee | null>(null);
+  const [cmsAssigning, setCmsAssign]  = useState<Employee | null>(null);
   const deleteMut = useDeleteEmployee();
 
   const { data, isLoading, refetch } = useEmployeeList({ search: search || undefined, status: statusFilter || undefined, limit: 200 });
@@ -298,6 +415,9 @@ export default function EmployeesPage() {
     <div style={{ padding: "24px 28px", paddingRight: detail ? 400 : 28, transition: "padding-right .2s" }}>
       {(showCreate || editing) && (
         <EmployeeForm employee={editing ?? undefined} onClose={() => { setCreate(false); setEditing(null); }} />
+      )}
+      {cmsAssigning && (
+        <CmsAssignModal employee={cmsAssigning} onClose={() => setCmsAssign(null)} />
       )}
       {detail && (
         <EmployeeDetail emp={detail} onClose={() => setDetail(null)} onEdit={() => { setEditing(detail); setDetail(null); }} />
@@ -369,7 +489,7 @@ export default function EmployeesPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ background: C.bg, borderBottom: `1px solid ${C.border}` }}>
-                {["Nhân viên", "Liên hệ", "Tài khoản", "Vai trò", "HĐ phụ trách", "Trạng thái", "Ngày tạo", ""].map((h) => (
+                {["Nhân viên", "Liên hệ", "Tài khoản", "Vai trò", "CMS", "HĐ phụ trách", "Trạng thái", "Ngày tạo", ""].map((h) => (
                   <th key={h} style={{ padding: "9px 16px", textAlign: "left", fontSize: 10, fontWeight: 600, color: C.textMuted, whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -421,6 +541,22 @@ export default function EmployeesPage() {
                         : <span style={{ color: C.textMuted, fontSize: 12 }}>—</span>}
                     </td>
 
+                    {/* CMS */}
+                    <td style={{ padding: "11px 16px" }}>
+                      {(emp.cms_ids ?? []).length === 0 ? (
+                        <span style={{ fontSize: 11, color: C.textMuted }}>Tất cả</span>
+                      ) : (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, maxWidth: 160 }}>
+                          {(emp.cms_ids ?? []).slice(0, 3).map((cid) => (
+                            <span key={cid} style={{ fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3, background: `${C.blue}20`, color: C.blue }}>{cid}</span>
+                          ))}
+                          {(emp.cms_ids ?? []).length > 3 && (
+                            <span style={{ fontSize: 10, color: C.textMuted }}>+{(emp.cms_ids ?? []).length - 3}</span>
+                          )}
+                        </div>
+                      )}
+                    </td>
+
                     {/* Contracts */}
                     <td style={{ padding: "11px 16px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 5, color: (emp.contract_count ?? 0) > 0 ? C.blue : C.textMuted, fontWeight: 600, fontSize: 13 }}>
@@ -441,11 +577,24 @@ export default function EmployeesPage() {
                     {/* Actions */}
                     <td style={{ padding: "11px 16px" }} onClick={(e) => e.stopPropagation()}>
                       <div style={{ display: "flex", gap: 4 }}>
-                        <button title="Sửa" onClick={() => setEditing(emp)}
+                        <button title="Sửa thông tin" onClick={() => setEditing(emp)}
                           style={{ background: "transparent", border: "none", cursor: "pointer", color: C.textMuted, padding: "4px 6px", borderRadius: RADIUS.sm, transition: "color .12s", display: "flex" }}
                           onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = C.blue)}
                           onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = C.textMuted)}>
                           <Pencil size={13} />
+                        </button>
+                        <button
+                          title={`Gán CMS${(emp.cms_ids ?? []).length > 0 ? ` (${emp.cms_ids.length})` : " (tất cả)"}`}
+                          onClick={() => setCmsAssign(emp)}
+                          style={{ background: "transparent", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: RADIUS.sm, transition: "color .12s", display: "flex", alignItems: "center", gap: 3,
+                            color: (emp.cms_ids ?? []).length > 0 ? C.blue : C.textMuted }}
+                          onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = C.cyan)}
+                          onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = (emp.cms_ids ?? []).length > 0 ? C.blue : C.textMuted)}
+                        >
+                          <Monitor size={13} />
+                          {(emp.cms_ids ?? []).length > 0 && (
+                            <span style={{ fontSize: 10, fontWeight: 700 }}>{emp.cms_ids.length}</span>
+                          )}
                         </button>
                         <button title="Xóa" onClick={() => void handleDelete(emp)}
                           style={{ background: "transparent", border: "none", cursor: "pointer", color: C.textMuted, padding: "4px 6px", borderRadius: RADIUS.sm, transition: "color .12s", display: "flex" }}

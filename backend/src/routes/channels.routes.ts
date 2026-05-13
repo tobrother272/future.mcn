@@ -6,11 +6,31 @@ import { validate } from "../middleware/validate.js";
 import { requireAuth } from "../middleware/auth.js";
 import { auditLogger } from "../middleware/audit.js";
 import { queryMany, queryOne } from "../db/helpers.js";
-import { NotFoundError } from "../lib/errors.js";
+import { NotFoundError, UnauthorizedError } from "../lib/errors.js";
 
 const router = Router();
 router.use(requireAuth);
 router.use(auditLogger("channel"));
+
+/**
+ * Đảm bảo partner user chỉ truy cập channel thuộc partner mình hoặc partner con.
+ * Internal/employee user pass-through.
+ */
+async function assertChannelAccessible(req: { user?: { userType?: string; partner_id?: string | null } }, channelId: string) {
+  if (req.user?.userType !== "partner") return;
+  const myPartnerId = req.user.partner_id;
+  if (!myPartnerId) throw new UnauthorizedError("Partner user thiếu partner_id");
+  const ch = await queryOne<{ partner_id: string | null }>(
+    `SELECT partner_id FROM channel WHERE id=$1`, [channelId]
+  );
+  if (!ch) throw new NotFoundError(`Channel ${channelId} not found`);
+  if (!ch.partner_id) throw new UnauthorizedError("Channel chưa gán partner");
+  const owned = await queryOne<{ ok: boolean }>(
+    `SELECT (id = $1 OR parent_id = $1) AS ok FROM partner WHERE id = $2`,
+    [myPartnerId, ch.partner_id]
+  );
+  if (!owned?.ok) throw new UnauthorizedError("Bạn không có quyền xem channel này");
+}
 
 const createSchema = z.object({
   cms_id:        z.string().optional(),
@@ -46,15 +66,38 @@ const listQuerySchema = z.object({
 });
 
 router.get("/", validate(listQuerySchema, "query"), async (req, res, next) => {
-  try { res.json(await ChannelService.list(req.query as never)); } catch(e) { next(e); }
+  try {
+    const filters = req.query as Parameters<typeof ChannelService.list>[0];
+    const user = req.user;
+
+    // Admin / Cấp Kênh employee chỉ thấy kênh thuộc CMS được gán
+    if (
+      user?.userType === "employee" &&
+      (user.role === "Admin" || user.role === "Cấp Kênh") &&
+      user.cms_ids && user.cms_ids.length > 0
+    ) {
+      // Nếu query có cms_id cụ thể, chỉ cho phép nếu nằm trong cms_ids của user
+      if (filters.cms_id && !user.cms_ids.includes(filters.cms_id)) {
+        res.json({ items: [], total: 0, page: 1, limit: filters.limit ?? 50 });
+        return;
+      }
+      filters.cms_ids = user.cms_ids;
+    }
+
+    res.json(await ChannelService.list(filters));
+  } catch(e) { next(e); }
 });
 
 router.get("/:id", async (req, res, next) => {
-  try { res.json(await ChannelService.getById(req.params.id)); } catch(e) { next(e); }
+  try {
+    await assertChannelAccessible(req, req.params.id);
+    res.json(await ChannelService.getById(req.params.id));
+  } catch(e) { next(e); }
 });
 
 router.get("/:id/revenue", async (req, res, next) => {
   try {
+    await assertChannelAccessible(req, req.params.id);
     const days = Math.min(365, Number(req.query.days) || 30);
     res.json(await ChannelService.getRevenue(req.params.id, days));
   } catch(e) { next(e); }
@@ -101,25 +144,36 @@ router.delete("/:id", async (req, res, next) => {
 // ── Analytics sub-resource ───────────────────────────────────
 router.get("/:id/analytics", async (req, res, next) => {
   try {
+    await assertChannelAccessible(req, req.params.id);
     const ch = await queryOne<{ id: string }>(
       `SELECT id FROM channel WHERE id = $1`, [req.params.id]
     );
     if (!ch) throw new NotFoundError(`Channel ${req.params.id} not found`);
 
+    const { from, to } = req.query as { from?: string; to?: string };
     const days  = Math.min(365, Number(req.query.days)  || 30);
     const limit = Math.min(365, Number(req.query.limit) || days);
+    const dateFilter = from && to
+      ? "date >= $2::date AND date <= $3::date"
+      : "date >= CURRENT_DATE - ($2::int)";
+    const limitPlaceholder = from && to ? "$4" : "$3";
+    const params = from && to ? [ch.id, from, to, limit] : [ch.id, days, limit];
 
     const rows = await queryMany(
       `SELECT date, views, engaged_views, watch_time_hours,
               avg_view_duration, revenue
        FROM channel_analytics
        WHERE channel_id = $1
-         AND date >= CURRENT_DATE - ($2::int)
+         AND ${dateFilter}
        ORDER BY date DESC
-       LIMIT $3`,
-      [ch.id, days, limit]
+       LIMIT ${limitPlaceholder}`,
+      params
     );
 
+    const summaryFilter = from && to
+      ? "date >= $2::date AND date <= $3::date"
+      : "date >= CURRENT_DATE - ($2::int)";
+    const summaryParams = from && to ? [ch.id, from, to] : [ch.id, days];
     const summary = await queryOne<{
       total_views: string; total_engaged: string;
       total_watch_hours: string; total_revenue: string;
@@ -131,8 +185,8 @@ router.get("/:id/analytics", async (req, res, next) => {
          COALESCE(SUM(revenue),0)::text          AS total_revenue
        FROM channel_analytics
        WHERE channel_id = $1
-         AND date >= CURRENT_DATE - ($2::int)`,
-      [ch.id, days]
+         AND ${summaryFilter}`,
+      summaryParams
     );
 
     res.json({
@@ -152,6 +206,7 @@ router.get("/:id/analytics", async (req, res, next) => {
 // ── Video sub-resource ────────────────────────────────────────
 router.get("/:id/videos", async (req, res, next) => {
   try {
+    await assertChannelAccessible(req, req.params.id);
     const limit  = Math.min(200, Number(req.query.limit)  || 50);
     const offset = Number(req.query.offset) || 0;
     res.json(await VideoService.listByChannel(req.params.id, { limit, offset }));

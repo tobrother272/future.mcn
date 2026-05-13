@@ -6,8 +6,9 @@ import { z } from "zod";
 import {
   Users, Plus, Search, Building2, CheckCircle, Clock, XCircle,
   Phone, Mail, Percent, ChevronDown, ChevronRight as ChevronRightIcon,
-  GripVertical, Link2, Pencil, Youtube,
+  GripVertical, Link2, Pencil, Youtube, BarChart2,
 } from "lucide-react";
+import { PartnerAnalyticsPopup } from "@/components/analytics/AnalyticsPopup";
 import { C } from "@/styles/theme";
 import { Button, Card, Pill, Input, Modal, Field, Select, EmptyState } from "@/components/ui";
 import {
@@ -63,7 +64,7 @@ interface DragState { draggingId: string | null; overId: string | null }
 function PartnerRow({
   partner, isChild = false, hasChildren = false, expanded, onToggle,
   dragState, onDragStart, onDragOver, onDragEnd, onDrop,
-  onClick, onEdit,
+  onClick, onEdit, onAnalytics,
 }: {
   partner: Partner;
   isChild?: boolean;
@@ -77,6 +78,7 @@ function PartnerRow({
   onDrop:      (targetId: string) => void;
   onClick:     () => void;
   onEdit:      (p: Partner) => void;
+  onAnalytics: (p: Partner) => void;
 }) {
   const isDragging = dragState.draggingId === partner.id;
   const isOver     = dragState.overId === partner.id && dragState.draggingId !== partner.id;
@@ -191,6 +193,20 @@ function PartnerRow({
       <div style={{ fontSize: 11, color: C.textMuted, minWidth: 80, textAlign: "right" }}>
         {fmtDate(partner.created_at)}
       </div>
+
+      {/* Analytics button */}
+      <button
+        title="Xem analytics doanh thu / view"
+        onClick={(e) => { e.stopPropagation(); onAnalytics(partner); }}
+        style={{
+          background: "none", border: "none", cursor: "pointer",
+          color: C.textMuted, padding: "2px 5px", borderRadius: 4,
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.color = C.amber)}
+        onMouseLeave={(e) => (e.currentTarget.style.color = C.textMuted)}
+      >
+        <BarChart2 size={13} />
+      </button>
 
       {/* Edit button */}
       <button
@@ -561,6 +577,7 @@ export default function PartnerWorkflowPage() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [editingPartner, setEditingPartner] = useState<Partner | null>(null);
+  const [analyticsPartner, setAnalyticsPartner] = useState<Partner | null>(null);
   const [transferringPartner, setTransferringPartner] = useState<Partner | null>(null);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter]   = useState("");
@@ -697,6 +714,7 @@ export default function PartnerWorkflowPage() {
           <div style={{ minWidth: 100, fontSize: 11, fontWeight: 600, color: C.textMuted, textAlign: "right" }}>DOANH THU</div>
           <div style={{ minWidth: 80, fontSize: 11, fontWeight: 600, color: C.textMuted, textAlign: "right" }}>NGÀY TẠO</div>
           <div style={{ width: 16 }} />
+          <div style={{ width: 16 }} />
         </div>
 
         {isLoading ? (
@@ -723,6 +741,7 @@ export default function PartnerWorkflowPage() {
                 onDrop={handleDrop}
                 onClick={() => navigate(`/partners/${root.id}`)}
                 onEdit={setEditingPartner}
+                onAnalytics={setAnalyticsPartner}
               />
 
               {/* Children — shown when expanded */}
@@ -739,6 +758,7 @@ export default function PartnerWorkflowPage() {
                     onDrop={handleDrop}
                     onClick={() => navigate(`/partners/${child.id}`)}
                     onEdit={setEditingPartner}
+                    onAnalytics={setAnalyticsPartner}
                   />
                 </div>
               ))}
@@ -751,6 +771,15 @@ export default function PartnerWorkflowPage() {
       <CreatePartnerModal open={showCreate} onClose={() => setShowCreate(false)} />
       {editingPartner && (
         <EditPartnerModal partner={editingPartner} onClose={() => setEditingPartner(null)} />
+      )}
+      {analyticsPartner && (
+        <PartnerAnalyticsPopup
+          open
+          onClose={() => setAnalyticsPartner(null)}
+          partnerId={analyticsPartner.id}
+          partnerName={analyticsPartner.name}
+          isParent={!analyticsPartner.parent_id}
+        />
       )}
     </div>
   );

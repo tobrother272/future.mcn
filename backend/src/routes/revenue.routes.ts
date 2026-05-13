@@ -20,7 +20,16 @@ router.get("/breakdown", async (req, res, next) => {
   try {
     const by = (req.query.by as "cms" | "channel" | "partner") ?? "cms";
     const period = Math.min(365, Number(req.query.period) || 30);
-    res.json(await RevenueService.getBreakdown(by, period));
+    const { from, to } = req.query as { from?: string; to?: string };
+    res.json(await RevenueService.getBreakdown(by, { period, from, to }));
+  } catch(e) { next(e); }
+});
+
+router.get("/system-daily", async (req, res, next) => {
+  try {
+    const period = Math.min(365, Number(req.query.period) || 30);
+    const { from, to } = req.query as { from?: string; to?: string };
+    res.json(await RevenueService.getSystemDaily({ period, from, to }));
   } catch(e) { next(e); }
 });
 

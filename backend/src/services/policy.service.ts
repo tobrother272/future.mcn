@@ -36,10 +36,22 @@ export const PolicyService = {
   async list(params: { search?: string; topic_id?: string; limit?: number; offset?: number } = {}): Promise<{ items: Policy[]; total: number }> {
     const vals: unknown[] = [];
     const clauses: string[] = [];
+
     if (params.search) {
-      vals.push(`%${params.search}%`);
-      clauses.push(`(name ILIKE $${vals.length} OR application ILIKE $${vals.length})`);
+      // Tách thành từng token, bỏ token rỗng
+      const tokens = params.search.trim().split(/\s+/).filter(Boolean);
+      for (const token of tokens) {
+        vals.push(`%${token}%`);
+        const n = vals.length;
+        // unaccent() cho phép tìm không dấu vẫn khớp có dấu (và ngược lại)
+        clauses.push(
+          `(unaccent(name)        ILIKE unaccent($${n})` +
+          ` OR unaccent(application) ILIKE unaccent($${n})` +
+          ` OR unaccent(content)     ILIKE unaccent($${n}))`
+        );
+      }
     }
+
     if (params.topic_id) {
       vals.push(params.topic_id);
       clauses.push(`$${vals.length} = ANY(topic_ids)`);

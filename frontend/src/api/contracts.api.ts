@@ -39,7 +39,7 @@ export interface PartnerContract {
 export function usePartnerContracts(partnerId: string) {
   return useQuery({
     queryKey: ["contracts", partnerId],
-    queryFn: () => apiClient.get(`contracts/${partnerId}`).json<PartnerContract[]>(),
+    queryFn: () => apiClient.get(`contracts/${partnerId}`).json<PartnerContractWithPartner[]>(),
     enabled: !!partnerId,
   });
 }

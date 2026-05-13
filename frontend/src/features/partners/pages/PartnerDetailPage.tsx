@@ -23,25 +23,26 @@ import { useCreateChannel, useUpdateChannel, useChannelList } from "@/api/channe
 import { useCmsList } from "@/api/cms.api";
 import { useToast } from "@/stores/notificationStore";
 import { fmt, fmtCurrency, fmtDate } from "@/lib/format";
+import { PERIOD_OPTIONS, periodToParams, todayInputDate, type PeriodKey } from "@/lib/periods";
 import type { Partner, PartnerType, PartnerTier } from "@/types/partner";
 import type { Channel } from "@/types/channel";
 import { RevenueSharePdfModal } from "../components/RevenueSharePdfModal";
+import { ChannelAnalyticsPopup } from "@/components/analytics/AnalyticsPopup";
 
 const TYPE_COLOR: Record<PartnerType, string> = { OWNED: C.amber, PRODUCTION: C.cyan, AFFILIATE: C.blue };
 const TIER_COLOR: Record<PartnerTier, string> = { Premium: C.purple, Standard: C.green, Basic: C.textMuted };
 
 // ── Revenue History Modal ─────────────────────────────────────
-const PERIOD_OPTIONS = [
-  { label: "30 ngày", days: 30 },
-  { label: "90 ngày", days: 90 },
-  { label: "365 ngày", days: 365 },
-];
-
 function PartnerHistoryModal({
-  open, onClose, partnerId, partnerName,
-}: { open: boolean; onClose: () => void; partnerId: string; partnerName: string }) {
-  const [days, setDays] = useState(30);
-  const { data: raw = [], isLoading } = usePartnerRevenue(partnerId, days);
+  open, onClose, partnerId, partnerName, isParent,
+}: { open: boolean; onClose: () => void; partnerId: string; partnerName: string; isParent?: boolean }) {
+  const [period, setPeriod] = useState<PeriodKey>("30");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState(todayInputDate());
+  const activeParams = fromDate && toDate
+    ? { from: fromDate, to: toDate }
+    : periodToParams(period);
+  const { data: raw = [], isLoading } = usePartnerRevenue(partnerId, activeParams);
 
   const chartData = raw.map((r) => ({
     date: fmtDate(r.snapshot_date),
@@ -56,20 +57,41 @@ function PartnerHistoryModal({
   const hasAnalytics   = raw.some((r) => (r.engaged_views ?? 0) > 0 || (r.watch_time_hours ?? 0) > 0);
 
   return (
-    <Modal open={open} onClose={onClose} title={`Lịch sử doanh thu — ${partnerName}`} width={860}>
+    <Modal open={open} onClose={onClose} title={`Lịch sử doanh thu — ${partnerName}`} fullscreen>
       {/* Period selector */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
         <span style={{ fontSize: 12, color: C.textMuted }}>
-          Tổng hợp từ channel analytics của tất cả kênh đã cấp cho đối tác
+          {isParent
+            ? "Tổng hợp từ channel analytics của tất cả kênh thuộc các đối tác con"
+            : "Tổng hợp từ channel analytics của tất cả kênh đã cấp cho đối tác"}
         </span>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {PERIOD_OPTIONS.map((opt) => (
-            <Button key={opt.days} size="sm"
-              variant={days === opt.days ? "primary" : "secondary"}
-              onClick={() => setDays(opt.days)}>
+            <Button key={opt.key} size="sm"
+              variant={period === opt.key ? "primary" : "secondary"}
+              onClick={() => {
+                setPeriod(opt.key);
+                setFromDate("");
+              }}>
               {opt.label}
             </Button>
           ))}
+          <input
+            type="date"
+            value={fromDate}
+            max={toDate || undefined}
+            onChange={(e) => setFromDate(e.target.value)}
+            style={{ height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, padding: "0 8px", fontSize: 12 }}
+            title="Từ ngày"
+          />
+          <input
+            type="date"
+            value={toDate}
+            min={fromDate || undefined}
+            onChange={(e) => setToDate(e.target.value)}
+            style={{ height: 30, borderRadius: 8, border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, padding: "0 8px", fontSize: 12 }}
+            title="Đến ngày"
+          />
         </div>
       </div>
 
@@ -91,15 +113,15 @@ function PartnerHistoryModal({
       {/* Chart */}
       <Card padding="16px" style={{ marginBottom: 16 }}>
         {isLoading ? (
-          <div style={{ height: 240, display: "flex", alignItems: "center", justifyContent: "center", color: C.textSub }}>Đang tải...</div>
+          <div style={{ height: 320, display: "flex", alignItems: "center", justifyContent: "center", color: C.textSub }}>Đang tải...</div>
         ) : chartData.length === 0 ? (
-          <div style={{ height: 240, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.textMuted, gap: 8 }}>
+          <div style={{ height: 320, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.textMuted, gap: 8 }}>
             <BarChart2 size={32} color={C.textMuted} />
             <div style={{ fontSize: 14 }}>Chưa có dữ liệu analytics</div>
             <div style={{ fontSize: 12 }}>Dữ liệu xuất hiện sau khi sync qua Public API</div>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={240}>
+          <ResponsiveContainer width="100%" height={320}>
             <LineChart data={chartData} margin={{ top: 4, right: 36, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
               <XAxis dataKey="date" tick={{ fontSize: 9, fill: C.textMuted }} tickLine={false} />
@@ -125,7 +147,7 @@ function PartnerHistoryModal({
       </Card>
 
       {/* Table */}
-      <div style={{ maxHeight: 280, overflowY: "auto", borderRadius: 8, border: `1px solid ${C.border}` }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", borderRadius: 8, border: `1px solid ${C.border}` }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead style={{ position: "sticky", top: 0, background: C.bgHover }}>
             <tr>
@@ -316,6 +338,7 @@ export default function PartnerDetailPage() {
   const navigate = useNavigate();
   const [addChannelOpen, setAddChannelOpen] = useState(false);
   const [transferChannel, setTransferChannel] = useState<ChannelItem | null>(null);
+  const [analyticsChannel, setAnalyticsChannel] = useState<ChannelItem | null>(null);
   const [parentTab, setParentTab] = useState<ParentTab>("sub-partners");
   const [childTab,  setChildTab]  = useState<ChildTab>("channels");
   const [appendixChild, setAppendixChild] = useState<Partner | null>(null);
@@ -382,6 +405,14 @@ export default function PartnerDetailPage() {
         channel={transferChannel}
         currentPartnerId={id!}
       />
+      {analyticsChannel && (
+        <ChannelAnalyticsPopup
+          open
+          onClose={() => setAnalyticsChannel(null)}
+          channelId={analyticsChannel.id}
+          channelName={analyticsChannel.name}
+        />
+      )}
 
       {appendixChild && appendixChannelsPending && (
         <div
@@ -412,6 +443,7 @@ export default function PartnerDetailPage() {
         onClose={() => setHistoryOpen(false)}
         partnerId={id!}
         partnerName={partner.name}
+        isParent={isParent}
       />
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -706,7 +738,16 @@ export default function PartnerDetailPage() {
                                 title={c.last_sync_analytic ? `Last analytic sync: ${new Date(c.last_sync_analytic).toLocaleString("vi-VN")}` : "Chưa sync analytics"}>—</span>
                             )}
                           </td>
-                          <td style={{ padding: "10px 8px" }} onClick={(e) => e.stopPropagation()}>
+                          <td style={{ padding: "10px 8px", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              size="sm" variant="ghost"
+                              icon={<BarChart2 size={13} />}
+                              onClick={() => setAnalyticsChannel(c)}
+                              title="Xem analytics doanh thu / view"
+                              style={{ color: C.amber, marginRight: 4 }}
+                            >
+                              Analytics
+                            </Button>
                             <Button
                               size="sm" variant="ghost"
                               icon={<ArrowRightLeft size={13} />}
@@ -1052,10 +1093,10 @@ function ContractsTable({ partnerId }: { partnerId: string }) {
           description="Bấm 'Upload hợp đồng' để thêm tài liệu" />
       ) : (
         <Card padding={0} style={{ overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ background: C.bgHover, borderBottom: `1px solid ${C.border}` }}>
-                {["Mã số", "Tiêu đề", "Nhân viên", "Dung lượng", "Ngày upload", ""].map((h) => (
+                {["Mã số", "Tiêu đề", "Đối tác", "Nhân viên", "Dung lượng", "Ngày upload", ""].map((h) => (
                   <th key={h} style={{ padding: "9px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.textMuted }}>{h}</th>
                 ))}
               </tr>
@@ -1084,6 +1125,17 @@ function ContractsTable({ partnerId }: { partnerId: string }) {
                       </div>
                       <span style={{ fontWeight: 500, color: C.text }}>{c.title}</span>
                     </div>
+                  </td>
+                  {/* Tên partner — hiển thị để phân biệt contract của partner con */}
+                  <td style={{ padding: "10px 16px" }}>
+                    {c.partner_id !== partnerId ? (
+                      <span style={{
+                        fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 5,
+                        background: `${C.purple}15`, color: C.purple, whiteSpace: "nowrap",
+                      }}>{c.partner_name ?? "—"}</span>
+                    ) : (
+                      <span style={{ color: C.textMuted, fontSize: 12 }}>—</span>
+                    )}
                   </td>
                   <td style={{ padding: "10px 16px" }}>
                     {c.employee_name ? (

@@ -1,13 +1,14 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import {
   Tv2, FileText, AlertTriangle, ShieldCheck,
-  User, UploadCloud, Home, LogOut,
+  User, UploadCloud, Home, LogOut, Users,
 } from "lucide-react";
 import { C, RADIUS } from "@/styles/theme";
 import { useAuthStore } from "@/stores/authStore";
 import { ToastContainer } from "@/components/notifications/ToastContainer";
+import { usePartnerProfile } from "@/api/partners.api";
 
-const NAV_ITEMS = [
+const BASE_NAV_ITEMS = [
   { to: "/portal/home",      icon: <Home size={16} />,          label: "Tổng quan" },
   { to: "/portal/channels",  icon: <Tv2 size={16} />,           label: "Kênh của tôi" },
   { to: "/portal/submit",    icon: <UploadCloud size={16} />,   label: "Gửi video" },
@@ -27,6 +28,18 @@ export function PortalLayout() {
   const userName = user?.userType === "partner"
     ? ((user as { full_name?: string }).full_name ?? user.email)
     : "";
+
+  const partnerId = user?.userType === "partner" ? (user.partner_id ?? "") : "";
+  const { data: profile } = usePartnerProfile(partnerId);
+
+  const isParentPartner = !!profile && !profile.parent_id;
+  const navItems = isParentPartner
+    ? [
+        ...BASE_NAV_ITEMS.slice(0, BASE_NAV_ITEMS.length - 1),
+        { to: "/portal/sub-accounts", icon: <Users size={16} />, label: "Tài khoản con" },
+        BASE_NAV_ITEMS[BASE_NAV_ITEMS.length - 1],
+      ]
+    : BASE_NAV_ITEMS;
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: C.bg, color: C.text }}>
@@ -68,7 +81,7 @@ export function PortalLayout() {
 
         {/* Nav links */}
         <nav style={{ flex: 1, padding: "10px 10px", overflowY: "auto" }}>
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

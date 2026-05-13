@@ -33,7 +33,27 @@ const listQuerySchema = z.object({
 });
 
 router.get("/", validate(listQuerySchema, "query"), async (req, res, next) => {
-  try { res.json(await CmsService.list(req.query as never)); } catch(e) { next(e); }
+  try {
+    const filters = req.query as { status?: string; page?: number; limit?: number };
+    // Employees with assigned cms_ids only see their CMS
+    const user = req.user;
+    if (user?.userType === "employee" && user.cms_ids && user.cms_ids.length > 0) {
+      const { queryMany, queryOne: qOne } = await import("../db/helpers.js");
+      const ids = user.cms_ids;
+      const placeholders = ids.map((_, i) => `$${i + 1}`).join(", ");
+      const rows = await queryMany(
+        `SELECT * FROM cms WHERE id IN (${placeholders}) ORDER BY name ASC`,
+        ids
+      );
+      const total = await qOne<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM cms WHERE id IN (${placeholders})`,
+        ids
+      );
+      res.json({ items: rows, total: Number(total?.count ?? 0), page: 1, limit: ids.length });
+      return;
+    }
+    res.json(await CmsService.list(filters as never));
+  } catch(e) { next(e); }
 });
 
 router.get("/:id", async (req, res, next) => {
@@ -46,8 +66,9 @@ router.get("/:id/stats", async (req, res, next) => {
 
 router.get("/:id/revenue", async (req, res, next) => {
   try {
+    const { from, to } = req.query as { from?: string; to?: string };
     const days = Math.min(365, Number(req.query.days) || 30);
-    res.json(await CmsService.getRevenue(req.params.id, days));
+    res.json(await CmsService.getRevenue(req.params.id, { days, from, to }));
   } catch(e) { next(e); }
 });
 

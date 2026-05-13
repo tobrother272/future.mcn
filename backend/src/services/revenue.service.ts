@@ -11,7 +11,16 @@ export const RevenueService = {
     );
   },
 
-  async getBreakdown(by: "cms" | "channel" | "partner", period = 30) {
+  async getBreakdown(
+    by: "cms" | "channel" | "partner",
+    opts: { period?: number; from?: string; to?: string } = {}
+  ) {
+    const { period = 30, from, to } = opts;
+    const useRange = Boolean(from && to);
+    const dateFilter = useRange
+      ? `rd.snapshot_date >= $1::date AND rd.snapshot_date <= $2::date`
+      : `rd.snapshot_date >= CURRENT_DATE - ($1::int)`;
+    const params = useRange ? [from!, to!] : [period];
     if (by === "cms") {
       return queryMany(
         `SELECT rd.scope_id, cm.name, cm.currency,
@@ -20,10 +29,10 @@ export const RevenueService = {
                 MAX(rd.snapshot_date) AS latest_date
          FROM revenue_daily rd
          JOIN cms cm ON rd.scope_id = cm.id
-         WHERE rd.scope='cms' AND rd.snapshot_date >= CURRENT_DATE - ($1::int)
+         WHERE rd.scope='cms' AND ${dateFilter}
          GROUP BY rd.scope_id, cm.name, cm.currency
          ORDER BY revenue DESC`,
-        [period]
+        params
       );
     }
     if (by === "partner") {
@@ -34,10 +43,10 @@ export const RevenueService = {
          FROM revenue_daily rd
          JOIN channel c ON rd.scope_id = c.id
          JOIN partner p ON c.partner_id = p.id
-         WHERE rd.scope='channel' AND rd.snapshot_date >= CURRENT_DATE - ($1::int)
+         WHERE rd.scope='channel' AND ${dateFilter}
          GROUP BY rd.scope_id, p.name, p.type
          ORDER BY revenue DESC`,
-        [period]
+        params
       );
     }
     // by === "channel"
@@ -48,12 +57,76 @@ export const RevenueService = {
        FROM revenue_daily rd
        JOIN channel c ON rd.scope_id = c.id
        LEFT JOIN cms cm ON c.cms_id = cm.id
-       WHERE rd.scope='channel' AND rd.snapshot_date >= CURRENT_DATE - ($1::int)
+       WHERE rd.scope='channel' AND ${dateFilter}
        GROUP BY c.id, c.name, c.cms_id, cm.name
        ORDER BY revenue DESC
        LIMIT 100`,
-      [period]
+      params
     );
+  },
+
+  async getSystemDaily(opts: { period?: number; from?: string; to?: string } = {}) {
+    const { period = 30, from, to } = opts;
+    const useRange = Boolean(from && to);
+    const analyticsDateFilter = useRange
+      ? "ca.date >= $1::date AND ca.date <= $2::date"
+      : "ca.date >= CURRENT_DATE - ($1::int)";
+    const analyticsParams = useRange ? [from!, to!] : [period];
+    const analyticsRows = await queryMany<{ snapshot_date: string; revenue: number; views: number }>(
+      `SELECT
+         ca.date AS snapshot_date,
+         COALESCE(SUM(ca.revenue), 0)::float8 AS revenue,
+         COALESCE(SUM(ca.views), 0)::float8   AS views
+       FROM channel_analytics ca
+       WHERE ${analyticsDateFilter}
+       GROUP BY ca.date
+       ORDER BY ca.date ASC`,
+      analyticsParams
+    );
+    const subDateFilter = useRange
+      ? "rd.snapshot_date >= $1::date AND rd.snapshot_date <= $2::date"
+      : "rd.snapshot_date >= CURRENT_DATE - ($1::int)";
+    const subRows = await queryMany<{ snapshot_date: string; subscribers: number }>(
+      `SELECT
+         rd.snapshot_date,
+         COALESCE(SUM(rd.subscribers), 0)::float8 AS subscribers
+       FROM revenue_daily rd
+       WHERE rd.scope='channel'
+         AND ${subDateFilter}
+       GROUP BY rd.snapshot_date`,
+      analyticsParams
+    );
+    const subMap = new Map(subRows.map((r) => [String(r.snapshot_date), Number(r.subscribers)]));
+    if (analyticsRows.length > 0) {
+      return analyticsRows.map((r) => ({
+        snapshot_date: r.snapshot_date,
+        revenue: Number(r.revenue ?? 0),
+        views: Number(r.views ?? 0),
+        subscribers: subMap.get(String(r.snapshot_date)) ?? 0,
+      }));
+    }
+    // Fallback to snapshot table if analytics is not available
+    const fallbackDateFilter = useRange
+      ? "rd.snapshot_date >= $1::date AND rd.snapshot_date <= $2::date"
+      : "rd.snapshot_date >= CURRENT_DATE - ($1::int)";
+    const fallback = await queryMany<{ snapshot_date: string; revenue: number; views: number }>(
+      `SELECT
+         rd.snapshot_date,
+         COALESCE(SUM(rd.revenue), 0)::float8 AS revenue,
+         COALESCE(SUM(rd.views), 0)::float8   AS views
+       FROM revenue_daily rd
+       WHERE rd.scope='cms'
+         AND ${fallbackDateFilter}
+       GROUP BY rd.snapshot_date
+       ORDER BY rd.snapshot_date ASC`,
+      analyticsParams
+    );
+    return fallback.map((r) => ({
+      snapshot_date: r.snapshot_date,
+      revenue: Number(r.revenue ?? 0),
+      views: Number(r.views ?? 0),
+      subscribers: subMap.get(String(r.snapshot_date)) ?? 0,
+    }));
   },
 
   async getVariation(scope: string, scopeId: string) {
