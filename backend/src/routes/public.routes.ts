@@ -417,7 +417,7 @@ const analyticsItemSchema = z.object({
 });
 
 const analyticsSyncSchema = z.object({
-  items: z.array(analyticsItemSchema).min(1).max(1000),
+  items: z.array(analyticsItemSchema).max(1000),
 });
 
 /**
@@ -456,12 +456,6 @@ router.post("/analytics/sync/:yt_id", async (req, res, next) => {
     );
     if (!ch) throw new NotFoundError(`Channel yt_id="${yt_id}" not found in CMS ${cms_id}`);
 
-    // Sort items to find the most recent date for last_revenue
-    const sortedItems = [...parsed.data.items].sort(
-      (a, b) => b.date.localeCompare(a.date)
-    );
-    const latestItem = sortedItems[0];
-
     for (const item of parsed.data.items) {
       const id = `CA_${ch.id}_${item.date}`.replace(/[^A-Za-z0-9_-]/g, "_");
       await query(
@@ -485,24 +479,29 @@ router.post("/analytics/sync/:yt_id", async (req, res, next) => {
       );
     }
 
-    // Update last_revenue (most recent date in batch), monthly_revenue (sum last 30d),
-    // last_sync_analytic (timestamp of this analytics push), last_sync
-    if (latestItem) {
-      await query(
-        `UPDATE channel
-         SET last_revenue         = $1,
-             monthly_revenue      = COALESCE((
-               SELECT SUM(revenue) FROM channel_analytics
-               WHERE channel_id = $2
-                 AND date >= CURRENT_DATE - 30
-             ), 0),
-             last_sync_analytic   = NOW(),
-             last_sync            = NOW(),
-             updated_at           = NOW()
-         WHERE id = $2`,
-        [latestItem.revenue, ch.id],
-      );
-    }
+    // Recompute last_revenue from the most recent date stored in DB (not from
+    // this batch) so that syncing historical batches never overwrites newer data.
+    // monthly_revenue = sum of last 30 calendar days from today (KPI field).
+    // Only update last_sync_analytic, not last_sync (last_sync = channel-list sync).
+    const updated = await queryOne<{ last_revenue: number }>(
+      `UPDATE channel
+       SET last_revenue       = COALESCE((
+             SELECT revenue FROM channel_analytics
+             WHERE channel_id = $1
+             ORDER BY date DESC
+             LIMIT 1
+           ), 0),
+           monthly_revenue    = COALESCE((
+             SELECT SUM(revenue) FROM channel_analytics
+             WHERE channel_id = $1
+               AND date >= CURRENT_DATE - 30
+           ), 0),
+           last_sync_analytic = NOW(),
+           updated_at         = NOW()
+       WHERE id = $1
+       RETURNING last_revenue`,
+      [ch.id],
+    );
 
     res.json({
       ok: true,
@@ -510,7 +509,7 @@ router.post("/analytics/sync/:yt_id", async (req, res, next) => {
       yt_id,
       channel_id: ch.id,
       upserted: parsed.data.items.length,
-      last_revenue: latestItem?.revenue ?? 0,
+      last_revenue: updated?.last_revenue ?? 0,
     });
   } catch (e) { next(e); }
 });

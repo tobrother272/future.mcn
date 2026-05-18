@@ -1,0 +1,33 @@
+---
+description: Cách start server dev cho dự án Meridian MCN
+alwaysApply: true
+---
+
+# Start Server — Dev Mode
+
+Khi người dùng yêu cầu "start server", "start project", "khởi động server", "chạy server", hoặc tương tự:
+
+**LUÔN chạy script sau** (không start Docker cho BE/FE):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "c:\Projects\future.mcn\dev.ps1"
+```
+
+Script này sẽ:
+1. Khởi động **PostgreSQL** qua Docker (`meridian-postgres-v6`, port 5433)
+2. Mở terminal riêng chạy **Backend** với `npm run dev:v6` (port 4000)
+3. Mở terminal riêng chạy **Frontend** với `npm run dev` (port 5173)
+
+## URLs sau khi start
+
+| Service    | URL                    |
+|------------|------------------------|
+| Frontend   | http://localhost:5173  |
+| Backend    | http://localhost:4000  |
+| PostgreSQL | localhost:5433         |
+
+## Lưu ý
+
+- BE và FE chạy **ngoài Docker** (hot-reload)
+- Chỉ DB chạy trong Docker
+- Nếu postgres container đã chạy rồi thì Docker tự skip, không bị lỗi
