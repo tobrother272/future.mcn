@@ -59,6 +59,10 @@ const listQuerySchema = z.object({
   monetization: z.enum(["On","Off"]).optional(),
   health:       z.enum(["Healthy","Warning","Critical"]).optional(),
   search:       z.string().optional(),
+  min_views:    z.coerce.number().optional(),
+  max_views:    z.coerce.number().optional(),
+  min_revenue:  z.coerce.number().optional(),
+  max_revenue:  z.coerce.number().optional(),
   page:         z.coerce.number().int().positive().default(1),
   limit:        z.coerce.number().int().positive().max(500).default(50),
   sortBy:       z.string().optional(),
@@ -151,6 +155,28 @@ router.get("/", validate(listQuerySchema, "query"), async (req, res, next) => {
         return;
       }
       filters.cms_ids = user.cms_ids;
+    }
+
+    // Partner user: chỉ được xem kênh của partner mình (và các đối tác con nếu là parent)
+    if (user?.userType === "partner" && user.partner_id) {
+      const { queryMany } = await import("../db/helpers.js");
+      // Lấy danh sách partner_id được phép: bản thân + các đối tác con
+      const allowed = await queryMany<{ id: string }>(
+        `SELECT id FROM partner WHERE id=$1 OR parent_id=$1`,
+        [user.partner_id]
+      );
+      const allowedIds = allowed.map((r) => r.id);
+
+      // Nếu query yêu cầu partner_id cụ thể mà nằm ngoài phạm vi → trả về rỗng
+      if (filters.partner_id && !allowedIds.includes(filters.partner_id)) {
+        res.json({ items: [], total: 0, page: 1, limit: filters.limit ?? 50 });
+        return;
+      }
+
+      // Scope về danh sách được phép
+      if (!filters.partner_id) {
+        filters.partner_ids = allowedIds;
+      }
     }
 
     res.json(await ChannelService.list(filters));

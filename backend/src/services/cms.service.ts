@@ -135,7 +135,9 @@ export const CmsService = {
   async getChannels(id: string, params: {
     page?: number; limit?: number;
     status?: string; monetization?: string; search?: string;
-    topic_id?: string; min_views?: number; min_revenue?: number;
+    topic_id?: string;
+    min_views?: number; max_views?: number;
+    min_revenue?: number; max_revenue?: number;
   }) {
     await CmsService.getById(id);
     const baseParams: unknown[] = [id];
@@ -144,10 +146,12 @@ export const CmsService = {
 
     if (params.status)      { andClauses.push(`c.status = $${idx++}`);            baseParams.push(params.status); }
     if (params.monetization){ andClauses.push(`c.monetization = $${idx++}`);       baseParams.push(params.monetization); }
-    if (params.search)      { andClauses.push(`c.name ILIKE $${idx++}`);           baseParams.push(`%${params.search}%`); }
+    if (params.search)      { andClauses.push(`(c.name ILIKE $${idx} OR c.yt_id ILIKE $${idx})`); baseParams.push(`%${params.search}%`); idx++; }
     if (params.topic_id)    { andClauses.push(`c.topic_id = $${idx++}`);           baseParams.push(params.topic_id); }
-    if (params.min_views != null && params.min_views > 0)   { andClauses.push(`c.monthly_views >= $${idx++}`);   baseParams.push(params.min_views); }
-    if (params.min_revenue != null && params.min_revenue > 0){ andClauses.push(`c.monthly_revenue >= $${idx++}`); baseParams.push(params.min_revenue); }
+    if (params.min_views != null && params.min_views > 0)     { andClauses.push(`c.monthly_views >= $${idx++}`);    baseParams.push(params.min_views); }
+    if (params.max_views != null && params.max_views > 0)     { andClauses.push(`c.monthly_views <= $${idx++}`);    baseParams.push(params.max_views); }
+    if (params.min_revenue != null && params.min_revenue > 0) { andClauses.push(`c.monthly_revenue >= $${idx++}`);  baseParams.push(params.min_revenue); }
+    if (params.max_revenue != null && params.max_revenue > 0) { andClauses.push(`c.monthly_revenue <= $${idx++}`);  baseParams.push(params.max_revenue); }
 
     const andSql = andClauses.length ? `AND ${andClauses.join(" AND ")}` : "";
     const pageLimit = Math.min(100, params.limit ?? 50);

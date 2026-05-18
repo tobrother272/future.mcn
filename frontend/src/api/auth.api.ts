@@ -57,6 +57,13 @@ export function useUpdateMe() {
   });
 }
 
+export function useVerifyPassword() {
+  return useMutation({
+    mutationFn: (password: string) =>
+      apiClient.post("auth/verify-password", { json: { password } }).json<{ ok: boolean }>(),
+  });
+}
+
 export function useChangePassword() {
   return useMutation({
     mutationFn: (data: { current_password: string; new_password: string }) =>

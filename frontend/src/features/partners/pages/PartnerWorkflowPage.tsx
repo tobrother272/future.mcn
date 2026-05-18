@@ -6,7 +6,7 @@ import { z } from "zod";
 import {
   Users, Plus, Search, Building2, CheckCircle, Clock, XCircle,
   Phone, Mail, Percent, ChevronDown, ChevronRight as ChevronRightIcon,
-  GripVertical, Link2, Pencil, Youtube, BarChart2,
+  GripVertical, Link2, Pencil, Youtube, BarChart2, Unlink, Check, X, KeyRound, Copy, RefreshCw, UserPlus,
 } from "lucide-react";
 import { PartnerAnalyticsPopup } from "@/components/analytics/AnalyticsPopup";
 import { C } from "@/styles/theme";
@@ -14,6 +14,9 @@ import { Button, Card, Pill, Input, Modal, Field, Select, EmptyState } from "@/c
 import {
   usePartnerList, useCreatePartner, useUpdatePartner, usePendingPartnerUsers,
   useApprovePartnerUser, useRejectPartnerUser, useSetPartnerParent,
+  useAllPartnerAccounts, useSetPartnerAccountStatus, useResetPartnerAccountPassword,
+  useAssignPartnerAccount,
+  type PartnerAccountRow,
 } from "@/api/partners.api";
 import { useToast } from "@/stores/notificationStore";
 import { fmtDate, fmtCurrency } from "@/lib/format";
@@ -21,7 +24,29 @@ import type { Partner, PartnerType, PartnerTier } from "@/types/partner";
 
 // ── Helpers ───────────────────────────────────────────────────
 const TYPE_COLOR: Record<PartnerType, string> = { OWNED: C.amber, PRODUCTION: C.cyan, AFFILIATE: C.blue };
-const TIER_COLOR: Record<PartnerTier, string> = { Premium: C.purple, Standard: C.green, Basic: C.textMuted };
+
+function genPassword(len = 14): string {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghjkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const special = "@#$!%";
+  const all = upper + lower + digits + special;
+  const arr = Array.from(crypto.getRandomValues(new Uint8Array(len)));
+  // đảm bảo có đủ loại ký tự
+  const pwd = [
+    upper[arr[0] % upper.length],
+    lower[arr[1] % lower.length],
+    digits[arr[2] % digits.length],
+    special[arr[3] % special.length],
+    ...arr.slice(4).map(b => all[b % all.length]),
+  ];
+  // shuffle
+  for (let i = pwd.length - 1; i > 0; i--) {
+    const j = arr[i] % (i + 1);
+    [pwd[i], pwd[j]] = [pwd[j], pwd[i]];
+  }
+  return pwd.join("");
+}const TIER_COLOR: Record<PartnerTier, string> = { Premium: C.purple, Standard: C.green, Basic: C.textMuted };
 
 function TypeBadge({ type }: { type: PartnerType }) {
   return (
@@ -64,7 +89,7 @@ interface DragState { draggingId: string | null; overId: string | null }
 function PartnerRow({
   partner, isChild = false, hasChildren = false, expanded, onToggle,
   dragState, onDragStart, onDragOver, onDragEnd, onDrop,
-  onClick, onEdit, onAnalytics,
+  onClick, onEdit, onAnalytics, onDetach, onAssignAccount,
 }: {
   partner: Partner;
   isChild?: boolean;
@@ -79,7 +104,10 @@ function PartnerRow({
   onClick:     () => void;
   onEdit:      (p: Partner) => void;
   onAnalytics: (p: Partner) => void;
+  onDetach?:   (p: Partner) => void;
+  onAssignAccount: (p: Partner) => void;
 }) {
+  const [confirming, setConfirming] = useState(false);
   const isDragging = dragState.draggingId === partner.id;
   const isOver     = dragState.overId === partner.id && dragState.draggingId !== partner.id;
   // Cannot drop onto a child (would exceed 2 levels)
@@ -222,6 +250,413 @@ function PartnerRow({
         <Pencil size={13} />
       </button>
 
+      {/* Assign Account button — chỉ hiện cho parent */}
+      {!isChild && (
+        <button
+          title="Gán tài khoản đối tác"
+          onClick={(e) => { e.stopPropagation(); onAssignAccount(partner); }}
+          style={{
+            background: "none", border: "none", cursor: "pointer",
+            color: C.textMuted, padding: "2px 5px", borderRadius: 4,
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = C.cyan)}
+          onMouseLeave={(e) => (e.currentTarget.style.color = C.textMuted)}
+        >
+          <UserPlus size={13} />
+        </button>
+      )}
+
+      {/* Detach to parent — chỉ hiện cho child row */}
+      {isChild && onDetach && (
+        confirming ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }} onClick={(e) => e.stopPropagation()}>
+            <span style={{ fontSize: 11, color: C.amber, whiteSpace: "nowrap" }}>Unlink?</span>
+            <button
+              title="Xác nhận"
+              onClick={(e) => { e.stopPropagation(); setConfirming(false); onDetach(partner); }}
+              style={{
+                background: `${C.green}20`, border: `1px solid ${C.green}40`,
+                cursor: "pointer", color: C.green, padding: "2px 5px", borderRadius: 4,
+              }}
+            >
+              <Check size={12} />
+            </button>
+            <button
+              title="Huỷ"
+              onClick={(e) => { e.stopPropagation(); setConfirming(false); }}
+              style={{
+                background: `${C.red}20`, border: `1px solid ${C.red}40`,
+                cursor: "pointer", color: C.red, padding: "2px 5px", borderRadius: 4,
+              }}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        ) : (
+          <button
+            title="Tách thành đối tác độc lập (parent)"
+            onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
+            style={{
+              display: "flex", alignItems: "center", gap: 4,
+              background: `${C.red}15`, border: `1px solid ${C.red}30`,
+              cursor: "pointer", color: C.red,
+              padding: "3px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = `${C.red}28`; e.currentTarget.style.borderColor = `${C.red}60`; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = `${C.red}15`; e.currentTarget.style.borderColor = `${C.red}30`; }}
+          >
+            <Unlink size={13} />
+          </button>
+        )
+      )}
+
+    </div>
+  );
+}
+
+// ── Assign Account Modal ──────────────────────────────────────
+function AssignAccountModal({ partner, onClose }: { partner: Partner; onClose: () => void }) {
+  const toast = useToast();
+  const { data: allAccounts = [], isLoading } = useAllPartnerAccounts();
+  const assignMut = useAssignPartnerAccount();
+  const [search, setSearch] = useState("");
+
+  const currentAccounts = allAccounts.filter(a => a.partner_id === partner.id);
+  const available = allAccounts.filter(a =>
+    a.partner_id !== partner.id &&
+    a.status !== "Rejected" &&
+    (
+      !search ||
+      a.full_name.toLowerCase().includes(search.toLowerCase()) ||
+      a.email.toLowerCase().includes(search.toLowerCase())
+    )
+  );
+
+  const STATUS_COLOR: Record<string, string> = { Active: C.green, PendingApproval: C.blue, Suspended: C.amber };
+  const STATUS_LABEL: Record<string, string> = { Active: "Active", PendingApproval: "Pending", Suspended: "Suspended" };
+
+  const handleAssign = async (userId: string, email: string) => {
+    try {
+      await assignMut.mutateAsync({ userId, partner_id: partner.id });
+      toast.success("Đã gán tài khoản", `${email} → ${partner.name}`);
+    } catch(e) { toast.error("Lỗi", e instanceof Error ? e.message : ""); }
+  };
+
+  const handleUnassign = async (userId: string, email: string) => {
+    try {
+      await assignMut.mutateAsync({ userId, partner_id: null });
+      toast.success("Đã huỷ gán", email);
+    } catch(e) { toast.error("Lỗi", e instanceof Error ? e.message : ""); }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`Gán tài khoản — ${partner.name}`} width={480}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {/* Đang gán */}
+        {currentAccounts.length > 0 && (
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+              Đang gán ({currentAccounts.length})
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {currentAccounts.map(a => (
+                <div key={a.id} style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "9px 12px", borderRadius: 8,
+                  background: `${C.green}10`, border: `1px solid ${C.green}30`,
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{a.full_name}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted }}>{a.email}</div>
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: `${STATUS_COLOR[a.status] ?? C.textMuted}20`, color: STATUS_COLOR[a.status] ?? C.textMuted }}>
+                    {STATUS_LABEL[a.status] ?? a.status}
+                  </span>
+                  <button
+                    title="Huỷ gán"
+                    onClick={() => handleUnassign(a.id, a.email)}
+                    style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 5, cursor: "pointer", color: C.textMuted, padding: "3px 7px" }}
+                    onMouseEnter={e => e.currentTarget.style.color = C.red}
+                    onMouseLeave={e => e.currentTarget.style.color = C.textMuted}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Picker tài khoản */}
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+            Chọn tài khoản để gán
+          </div>
+
+          {/* Search */}
+          <div style={{ position: "relative", marginBottom: 8 }}>
+            <Search size={13} color={C.textMuted} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Tìm tên, email..."
+              style={{ width: "100%", height: 34, paddingLeft: 30, paddingRight: 12, background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 13, outline: "none", boxSizing: "border-box" }}
+            />
+          </div>
+
+          {isLoading ? (
+            <div style={{ padding: 20, textAlign: "center", color: C.textMuted, fontSize: 13 }}>Đang tải...</div>
+          ) : available.length === 0 ? (
+            <div style={{ padding: 16, textAlign: "center", color: C.textMuted, fontSize: 13, border: `1px dashed ${C.border}`, borderRadius: 8 }}>
+              {search ? "Không tìm thấy tài khoản phù hợp" : "Tất cả tài khoản đã được gán"}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 240, overflowY: "auto" }}>
+              {available.map(a => (
+                <div key={a.id} style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "9px 12px", borderRadius: 8,
+                  border: `1px solid ${C.border}`, background: "transparent",
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{a.full_name}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted }}>
+                      {a.email}
+                      {a.partner_name && <span style={{ color: C.amber, marginLeft: 6 }}>← {a.partner_name}</span>}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: `${STATUS_COLOR[a.status] ?? C.textMuted}20`, color: STATUS_COLOR[a.status] ?? C.textMuted }}>
+                    {STATUS_LABEL[a.status] ?? a.status}
+                  </span>
+                  <Button size="sm" variant="primary" loading={assignMut.isPending}
+                    onClick={() => handleAssign(a.id, a.email)}>
+                    Gán
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <Button variant="secondary" onClick={onClose}>Đóng</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Partner Accounts Tab ──────────────────────────────────────
+function PartnerAccountsTab() {
+  const { data: accounts = [], isLoading, refetch } = useAllPartnerAccounts();
+  const approveMut = useApprovePartnerUser();
+  const rejectMut  = useRejectPartnerUser();
+  const statusMut  = useSetPartnerAccountStatus();
+  const resetMut   = useResetPartnerAccountPassword();
+  const toast      = useToast();
+  const [search, setSearch]   = useState("");
+  const [statusF, setStatusF] = useState("");
+  const [resetTarget, setResetTarget] = useState<PartnerAccountRow | null>(null);
+  const [newPwd, setNewPwd]   = useState("");
+  const [copied, setCopied]   = useState(false);
+
+  const openReset = (a: PartnerAccountRow) => { setResetTarget(a); setNewPwd(""); setCopied(false); };
+  const copyPwd   = () => { navigator.clipboard.writeText(newPwd); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+
+  const STATUS_COLOR: Record<string, string> = { Active: C.green, Suspended: C.amber, Rejected: C.red, PendingApproval: C.blue };
+  const STATUS_LABEL: Record<string, string> = { Active: "Active", Suspended: "Suspended", Rejected: "Rejected", PendingApproval: "Pending" };
+
+  const filtered = accounts.filter(a => {
+    const q = search.toLowerCase();
+    const matchQ = !q || a.email.toLowerCase().includes(q) || a.full_name.toLowerCase().includes(q) || (a.partner_name ?? "").toLowerCase().includes(q);
+    const matchS = !statusF || a.status === statusF;
+    return matchQ && matchS;
+  });
+
+  // Group theo partner cha (partner_parent_id luôn null ở đây sau khi backend đã lọc)
+  const partnerMap = new Map<string, { name: string; type: string | null; accounts: PartnerAccountRow[] }>();
+  const noPartner: PartnerAccountRow[] = [];
+
+  for (const a of filtered) {
+    if (!a.partner_id) { noPartner.push(a); continue; }
+    if (!partnerMap.has(a.partner_id)) {
+      partnerMap.set(a.partner_id, { name: a.partner_name ?? a.partner_id, type: a.partner_type, accounts: [] });
+    }
+    partnerMap.get(a.partner_id)!.accounts.push(a);
+  }
+
+  const sortedParents = [...partnerMap.entries()].sort(([, a], [, b]) => a.name.localeCompare(b.name));
+
+  const renderAccountRow = (a: PartnerAccountRow) => (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 10,
+      padding: "8px 16px 8px 40px",
+      borderBottom: `1px solid ${C.border}`,
+      background: "transparent",
+    }}>
+      {/* Tree line */}
+      <span style={{ color: C.border, fontSize: 13, flexShrink: 0 }}>└</span>
+
+      {/* Info */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 13, color: C.text }}>{a.full_name}</div>
+        <div style={{ fontSize: 11, color: C.textMuted }}>{a.email}{a.phone && ` · ${a.phone}`}</div>
+      </div>
+
+      {/* Last login */}
+      <div style={{ fontSize: 11, color: C.textMuted, minWidth: 110 }}>
+        {a.last_login ? fmtDate(a.last_login) : "Chưa đăng nhập"}
+      </div>
+
+      {/* Created */}
+      <div style={{ fontSize: 11, color: C.textMuted, minWidth: 90 }}>{fmtDate(a.created_at)}</div>
+
+      {/* Status badge */}
+      <span style={{
+        fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, minWidth: 70, textAlign: "center",
+        background: `${STATUS_COLOR[a.status] ?? C.textMuted}20`,
+        color: STATUS_COLOR[a.status] ?? C.textMuted,
+      }}>{STATUS_LABEL[a.status] ?? a.status}</span>
+
+      {/* Actions */}
+      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+        {a.status === "PendingApproval" && (<>
+          <Button size="sm" variant="primary" loading={approveMut.isPending}
+            onClick={async () => { try { await approveMut.mutateAsync({ userId: a.id }); toast.success("Đã duyệt", a.email); } catch(e) { toast.error("Lỗi", e instanceof Error ? e.message : ""); } }}>
+            Duyệt
+          </Button>
+          <Button size="sm" variant="secondary" loading={rejectMut.isPending}
+            onClick={async () => { try { await rejectMut.mutateAsync(a.id); toast.success("Đã từ chối", a.email); } catch(e) { toast.error("Lỗi", e instanceof Error ? e.message : ""); } }}>
+            Từ chối
+          </Button>
+        </>)}
+        {a.status === "Active" && (
+          <Button size="sm" variant="secondary" loading={statusMut.isPending}
+            onClick={async () => { try { await statusMut.mutateAsync({ userId: a.id, status: "Suspended" }); toast.success("Đã khoá", a.email); } catch(e) { toast.error("Lỗi", e instanceof Error ? e.message : ""); } }}>
+            Khoá
+          </Button>
+        )}
+        {a.status === "Suspended" && (
+          <Button size="sm" variant="primary" loading={statusMut.isPending}
+            onClick={async () => { try { await statusMut.mutateAsync({ userId: a.id, status: "Active" }); toast.success("Đã mở khoá", a.email); } catch(e) { toast.error("Lỗi", e instanceof Error ? e.message : ""); } }}>
+            Mở khoá
+          </Button>
+        )}
+        {a.status !== "Rejected" && (
+          <button title="Đặt lại mật khẩu" onClick={() => openReset(a)}
+            style={{ display: "flex", alignItems: "center", background: "none", border: `1px solid ${C.border}`, borderRadius: 5, cursor: "pointer", color: C.textMuted, padding: "3px 7px" }}
+            onMouseEnter={e => { e.currentTarget.style.color = C.amber; e.currentTarget.style.borderColor = C.amber; }}
+            onMouseLeave={e => { e.currentTarget.style.color = C.textMuted; e.currentTarget.style.borderColor = C.border; }}>
+            <KeyRound size={11} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Filters */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ position: "relative", flex: "1 1 200px", minWidth: 180 }}>
+          <Search size={14} color={C.textMuted} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm tên, email, đối tác..."
+            style={{ width: "100%", paddingLeft: 32, paddingRight: 12, height: 34, background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+        </div>
+        <select value={statusF} onChange={e => setStatusF(e.target.value)}
+          style={{ height: 34, padding: "0 10px", background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 12, cursor: "pointer" }}>
+          <option value="">Tất cả status</option>
+          <option value="PendingApproval">Pending</option>
+          <option value="Active">Active</option>
+          <option value="Suspended">Suspended</option>
+          <option value="Rejected">Rejected</option>
+        </select>
+        <button onClick={() => refetch()}
+          style={{ height: 34, padding: "0 12px", background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, color: C.textMuted, cursor: "pointer", fontSize: 12 }}>
+          Làm mới
+        </button>
+        <span style={{ marginLeft: "auto", fontSize: 12, color: C.textMuted }}>{filtered.length} tài khoản · {sortedParents.length + (noPartner.length > 0 ? 1 : 0)} nhóm</span>
+      </div>
+
+      <Card padding={0} style={{ overflow: "hidden" }}>
+        {isLoading ? (
+          <div style={{ padding: 32, textAlign: "center", color: C.textMuted }}>Đang tải...</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: 32, textAlign: "center", color: C.textMuted }}>Không có tài khoản nào</div>
+        ) : (
+          <>
+            {sortedParents.map(([pid, group]) => (
+              <div key={pid}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", background: C.bgHover ?? `${C.surface}80`, borderBottom: `1px solid ${C.border}`, borderTop: `1px solid ${C.border}` }}>
+                  <Building2 size={13} color={group.type ? TYPE_COLOR[group.type as PartnerType] ?? C.textMuted : C.textMuted} />
+                  <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{group.name}</span>
+                  {group.type && (
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: `${TYPE_COLOR[group.type as PartnerType] ?? C.textMuted}20`, color: TYPE_COLOR[group.type as PartnerType] ?? C.textMuted }}>
+                      {group.type}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 4 }}>{group.accounts.length} tài khoản</span>
+                </div>
+                {group.accounts.map(a => <div key={a.id}>{renderAccountRow(a)}</div>)}
+              </div>
+            ))}
+
+            {noPartner.length > 0 && (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", background: C.bgHover ?? `${C.surface}80`, borderBottom: `1px solid ${C.border}`, borderTop: `1px solid ${C.border}` }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: C.textMuted }}>— Chưa gán đối tác —</span>
+                  <span style={{ fontSize: 11, color: C.textMuted }}>{noPartner.length} tài khoản</span>
+                </div>
+                {noPartner.map(a => <div key={a.id}>{renderAccountRow(a)}</div>)}
+              </div>
+            )}
+          </>
+        )}
+      </Card>
+
+      {/* Reset Password Modal */}
+      {resetTarget && (
+        <Modal open onClose={() => setResetTarget(null)} title={`Đặt lại mật khẩu — ${resetTarget.full_name}`} width={420} closeOnOverlay={true}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ fontSize: 13, color: C.textMuted }}>
+              Tài khoản: <span style={{ color: C.text, fontWeight: 600 }}>{resetTarget.email}</span>
+            </div>
+            {!newPwd ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "center", padding: "16px 0" }}>
+                <div style={{ fontSize: 12, color: C.textMuted, textAlign: "center" }}>
+                  Nhấn để tạo mật khẩu ngẫu nhiên và cập nhật ngay vào hệ thống.
+                </div>
+                <Button variant="primary" loading={resetMut.isPending} icon={<KeyRound size={14} />}
+                  onClick={async () => {
+                    const pwd = genPassword();
+                    try { await resetMut.mutateAsync({ userId: resetTarget.id, new_password: pwd }); setNewPwd(pwd); setCopied(false); }
+                    catch(e) { toast.error("Lỗi", e instanceof Error ? e.message : ""); }
+                  }}>
+                  Tạo mật khẩu mới
+                </Button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontSize: 12, color: C.green, fontWeight: 600 }}>✓ Đã cập nhật mật khẩu vào hệ thống</div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <div style={{ flex: 1, height: 38, padding: "0 12px", background: `${C.green}10`, border: `1px solid ${C.green}40`, borderRadius: 8, display: "flex", alignItems: "center", fontFamily: "monospace", fontSize: 14, letterSpacing: "0.08em", color: C.text, userSelect: "all" }}>
+                    {newPwd}
+                  </div>
+                  <button onClick={copyPwd}
+                    style={{ width: 38, height: 38, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: copied ? `${C.green}20` : C.bgCard, border: `1px solid ${copied ? C.green : C.border}`, borderRadius: 8, cursor: "pointer", color: copied ? C.green : C.textMuted, transition: "all 0.2s" }}>
+                    {copied ? <Check size={14} /> : <Copy size={14} />}
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: C.textMuted }}>Hãy copy và gửi mật khẩu này cho đối tác.</div>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <Button variant="secondary" onClick={() => setResetTarget(null)}>{newPwd ? "Đóng" : "Huỷ"}</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -579,6 +1014,7 @@ export default function PartnerWorkflowPage() {
   const [editingPartner, setEditingPartner] = useState<Partner | null>(null);
   const [analyticsPartner, setAnalyticsPartner] = useState<Partner | null>(null);
   const [transferringPartner, setTransferringPartner] = useState<Partner | null>(null);
+  const [assignAccountPartner, setAssignAccountPartner] = useState<Partner | null>(null);  const [activeTab, setActiveTab] = useState<"partners" | "accounts">("partners");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter]   = useState("");
   const [statusFilter, setStatusFilter] = useState("Active");
@@ -639,6 +1075,14 @@ export default function PartnerWorkflowPage() {
       toast.error("Lỗi phân cấp", err instanceof Error ? err.message : "");
     }
   };
+  const handleDetach = async (partner: Partner) => {
+    try {
+      await setParentMut.mutateAsync({ id: partner.id, parent_id: null });
+      toast.success("Đã tách", `${partner.name} trở thành đối tác độc lập`);
+    } catch (err) {
+      toast.error("Lỗi tách", err instanceof Error ? err.message : "");
+    }
+  };
   const toggleExpand = (id: string) =>
     setExpanded(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
 
@@ -652,11 +1096,38 @@ export default function PartnerWorkflowPage() {
           <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text, marginBottom: 2 }}>Đối tác</h1>
           <div style={{ fontSize: 13, color: C.textMuted }}>{total} đối tác</div>
         </div>
-        <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setShowCreate(true)}>
-          Thêm đối tác
-        </Button>
+        {activeTab === "partners" && (
+          <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setShowCreate(true)}>
+            Thêm đối tác
+          </Button>
+        )}
       </div>
 
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 20, borderBottom: `1px solid ${C.border}`, paddingBottom: 0 }}>
+        {([
+          { key: "partners", label: "Danh sách đối tác" },
+          { key: "accounts", label: "Tài khoản đối tác" },
+        ] as const).map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              padding: "8px 16px", fontSize: 13, fontWeight: 600,
+              color: activeTab === tab.key ? C.blue : C.textMuted,
+              borderBottom: activeTab === tab.key ? `2px solid ${C.blue}` : "2px solid transparent",
+              marginBottom: -1, borderRadius: "4px 4px 0 0",
+              transition: "color 0.15s",
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "accounts" && <PartnerAccountsTab />}
+      {activeTab === "partners" && (<>
       {/* KPI */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
         {[
@@ -742,6 +1213,7 @@ export default function PartnerWorkflowPage() {
                 onClick={() => navigate(`/partners/${root.id}`)}
                 onEdit={setEditingPartner}
                 onAnalytics={setAnalyticsPartner}
+                onAssignAccount={setAssignAccountPartner}
               />
 
               {/* Children — shown when expanded */}
@@ -759,6 +1231,8 @@ export default function PartnerWorkflowPage() {
                     onClick={() => navigate(`/partners/${child.id}`)}
                     onEdit={setEditingPartner}
                     onAnalytics={setAnalyticsPartner}
+                    onDetach={handleDetach}
+                    onAssignAccount={setAssignAccountPartner}
                   />
                 </div>
               ))}
@@ -781,6 +1255,10 @@ export default function PartnerWorkflowPage() {
           isParent={!analyticsPartner.parent_id}
         />
       )}
+      {assignAccountPartner && (
+        <AssignAccountModal partner={assignAccountPartner} onClose={() => setAssignAccountPartner(null)} />
+      )}
+      </>)}
     </div>
   );
 }

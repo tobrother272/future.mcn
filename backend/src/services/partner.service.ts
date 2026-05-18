@@ -327,7 +327,9 @@ export const PartnerService = {
   /** Make sure `subAccountId` belongs to a direct child of `parentPartnerId`. */
   async getOwnedSubAccount(parentPartnerId: string, subAccountId: string) {
     const row = await queryOne<PartnerUser & { parent_id: string | null }>(
-      `SELECT ${PARTNER_USER_COLS}, p.parent_id
+      `SELECT a.id, a.partner_id, a.email, a.full_name, a.phone,
+              a.status, a.approved_by, a.approved_at, a.last_login, a.created_at,
+              p.parent_id
          FROM account a
          JOIN partner p ON p.id = a.partner_id
         WHERE a.id = $1

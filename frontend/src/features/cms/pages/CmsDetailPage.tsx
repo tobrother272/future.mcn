@@ -1,10 +1,10 @@
 ﻿import { useState, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronLeft, History, Tv, Upload, CheckCircle, AlertCircle, UserCog, Building2, ArrowRightLeft, Tag, Plus, Server, Trash2, Search, Loader2, ShieldCheck } from "lucide-react";
+import { ChevronLeft, History, Tv, Upload, CheckCircle, AlertCircle, UserCog, Building2, ArrowRightLeft, Tag, Plus, Server, Trash2, Search, Loader2, ShieldCheck, X } from "lucide-react";
 import { C } from "@/styles/theme";
 import { Button, Pill, Card, Input, EmptyState, StatusDot, Modal, Field } from "@/components/ui";
-import { useCms, useCmsStats, useCmsChannels, useTopics, useCmsList, useCreateTopic, useClearCmsChannels } from "@/api/cms.api";
+import { useCms, useCmsStats, useCmsChannels, useTopics, useCmsList, useCreateTopic, useClearCmsChannels, useDeleteTopic } from "@/api/cms.api";
 import { useBulkImportChannels, useUpdateChannel, useBulkEditChannels, useCreateChannel, useValidateYtChannel } from "@/api/channels.api";
 import type { YtValidateResult } from "@/api/channels.api";
 import { usePartnerList } from "@/api/partners.api";
@@ -275,17 +275,18 @@ function AssignTopicModal({
   const { data: topics = [], refetch } = useTopics();
 
   const [selectedId, setSelectedId] = useState<string>("");
-  const [newName, setNewName]       = useState("");
+  const [newName, setNewName]       = useState<string | null>(null);
   const [creating, setCreating]     = useState(false);
+  const [search, setSearch]         = useState("");
 
   const handleCreateTopic = async () => {
-    if (!newName.trim()) return;
+    if (!newName?.trim()) return;
     setCreating(true);
     try {
       const t = await createTopic.mutateAsync({ name: newName.trim() });
       await refetch();
       setSelectedId(t.id);
-      setNewName("");
+      setNewName(null);
       toast.success("Đã tạo chủ đề", t.name);
     } catch (err) {
       toast.error("Lỗi tạo chủ đề", err instanceof Error ? err.message : "");
@@ -321,67 +322,114 @@ function AssignTopicModal({
         </>
       }
     >
-      {/* Tạo chủ đề mới */}
-      <div style={{ marginBottom: 16, padding: "12px 14px", borderRadius: 10, border: `1px dashed ${C.border}`, background: C.bgHover }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 8 }}>TẠO CHỦ ĐỀ MỚI</div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void handleCreateTopic(); }}
-            placeholder="Nhập tên chủ đề mới..."
-            style={{
-              flex: 1, height: 34, padding: "0 12px", borderRadius: 8,
-              border: `1px solid ${C.border}`, background: C.bgCard,
-              color: C.text, fontSize: 13, outline: "none",
-            }}
-          />
-          <Button size="sm" variant="secondary" icon={<Plus size={13} />}
-            loading={creating} disabled={!newName.trim()}
-            onClick={() => void handleCreateTopic()}>
-            Tạo
-          </Button>
-        </div>
+      {/* Search */}
+      <div style={{ position: "relative", marginBottom: 12 }}>
+        <Search size={13} color={C.textMuted} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Tìm chủ đề..."
+          autoComplete="off"
+          style={{
+            width: "100%", boxSizing: "border-box",
+            padding: "7px 12px 7px 32px",
+            background: C.bgInput, border: `1px solid ${C.border}`,
+            borderRadius: 8, color: C.text, fontSize: 13, outline: "none",
+          }}
+        />
       </div>
 
-      {/* Danh sách chủ đề hiện có */}
       <div style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 8 }}>
-        CHỌN CHỦ ĐỀ HIỆN CÓ ({topics.length})
+        CHỌN CHỦ ĐỀ ({topics.length})
       </div>
-      {topics.length === 0 ? (
-        <div style={{ fontSize: 13, color: C.textMuted, textAlign: "center", padding: "16px 0" }}>
-          Chưa có chủ đề nào — tạo chủ đề mới ở trên
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 280, overflowY: "auto" }}>
-          {topics.map((t) => (
-            <label key={t.id} style={{
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 280, overflowY: "auto" }}>
+
+        {/* Tạo chủ đề mới — record đầu list */}
+        {newName !== null ? (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
+            borderRadius: 8, border: `1px dashed ${C.blue}`, background: `${C.blue}08`,
+          }}>
+            <div style={{ width: 24, height: 24, borderRadius: 6, background: `${C.blue}20`,
+              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Plus size={11} color={C.blue} />
+            </div>
+            <input
+              autoFocus
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleCreateTopic();
+                if (e.key === "Escape") setNewName(null);
+              }}
+              placeholder="Tên chủ đề mới..."
+              style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: C.text, fontSize: 13, fontWeight: 600 }}
+            />
+            <Button size="sm" variant="primary" loading={creating} disabled={!newName.trim()}
+              onClick={() => void handleCreateTopic()} style={{ padding: "3px 10px", fontSize: 12 }}>
+              Tạo
+            </Button>
+            <button onClick={() => setNewName(null)}
+              style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, padding: 2, display: "flex" }}>
+              <X size={14} />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setNewName("")}
+            style={{
               display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
-              borderRadius: 8, border: `1px solid ${selectedId === t.id ? C.purple : C.border}`,
-              background: selectedId === t.id ? `${C.purple}10` : C.bgCard,
-              cursor: "pointer", transition: "all 0.1s",
-            }}>
-              <input type="radio" name="topic" value={t.id}
-                checked={selectedId === t.id}
-                onChange={() => setSelectedId(t.id)}
-                style={{ accentColor: C.purple }} />
-              <div style={{ width: 24, height: 24, borderRadius: 6, background: `${C.purple}20`,
-                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <Tag size={11} color={C.purple} />
+              borderRadius: 8, border: `1px dashed ${C.border}`,
+              background: "transparent", cursor: "pointer", transition: "all 0.1s", width: "100%",
+              color: C.textMuted,
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.borderColor = C.blue;
+              (e.currentTarget as HTMLButtonElement).style.color = C.blue;
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.borderColor = C.border;
+              (e.currentTarget as HTMLButtonElement).style.color = C.textMuted;
+            }}
+          >
+            <div style={{ width: 24, height: 24, borderRadius: 6, background: `${C.blue}15`,
+              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Plus size={11} color={C.blue} />
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 500 }}>Tạo chủ đề mới...</span>
+          </button>
+        )}
+
+        {/* Danh sách chủ đề hiện có */}
+        {topics.filter(t => t.name.toLowerCase().includes(search.toLowerCase())).map((t) => (
+          <label key={t.id} style={{
+            display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
+            borderRadius: 8, border: `1px solid ${selectedId === t.id ? C.purple : C.border}`,
+            background: selectedId === t.id ? `${C.purple}10` : C.bgCard,
+            cursor: "pointer", transition: "all 0.1s",
+          }}>
+            <input type="radio" name="topic" value={t.id}
+              checked={selectedId === t.id}
+              onChange={() => setSelectedId(t.id)}
+              style={{ accentColor: C.purple }} />
+            <div style={{ width: 24, height: 24, borderRadius: 6, background: `${C.purple}20`,
+              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Tag size={11} color={C.purple} />
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{t.name}</div>
+              {t.dept && <div style={{ fontSize: 11, color: C.textMuted }}>{t.dept}</div>}
+            </div>
+            {t.expected_channels > 0 && (
+              <div style={{ marginLeft: "auto", fontSize: 11, color: C.textMuted }}>
+                {t.expected_channels} kênh
               </div>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{t.name}</div>
-                {t.dept && <div style={{ fontSize: 11, color: C.textMuted }}>{t.dept}</div>}
-              </div>
-              {t.expected_channels > 0 && (
-                <div style={{ marginLeft: "auto", fontSize: 11, color: C.textMuted }}>
-                  {t.expected_channels} kênh
-                </div>
-              )}
-            </label>
-          ))}
-        </div>
-      )}
+            )}
+          </label>
+        ))}
+
+      </div>
     </Modal>
   );
 }
@@ -695,7 +743,9 @@ export default function CmsDetailPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [monoFilter, setMonoFilter]     = useState("");
   const [minViews, setMinViews]         = useState("");
+  const [maxViews, setMaxViews]         = useState("");
   const [minRevenue, setMinRevenue]     = useState("");
+  const [maxRevenue, setMaxRevenue]     = useState("");
   const [showImport, setShowImport] = useState(false);
   const [showAddChannel, setShowAddChannel] = useState(false);
   const [showAssignPartner, setShowAssignPartner] = useState(false);
@@ -706,6 +756,7 @@ export default function CmsDetailPage() {
 
   const clearChannels = useClearCmsChannels(id!);
   const createChannel = useCreateChannel();
+  const deleteTopic  = useDeleteTopic();
   const toast = useToast();
   const { can } = usePermissions();
 
@@ -717,7 +768,9 @@ export default function CmsDetailPage() {
     ...(statusFilter? { status: statusFilter }          : {}),
     ...(monoFilter  ? { monetization: monoFilter }      : {}),
     ...(minViews    ? { min_views: Number(minViews) }   : {}),
+    ...(maxViews    ? { max_views: Number(maxViews) }   : {}),
     ...(minRevenue  ? { min_revenue: Number(minRevenue)}: {}),
+    ...(maxRevenue  ? { max_revenue: Number(maxRevenue)}: {}),
     limit: 100,
   });
   const { data: topics } = useTopics();
@@ -828,24 +881,61 @@ export default function CmsDetailPage() {
           <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.border}`, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
             <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 600 }}>TOPIC:</span>
             {(topics ?? []).map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setTopicFilter(topicFilter === t.id ? "" : t.id)}
-                style={{
-                  fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 99, cursor: "pointer",
-                  border: `1px solid ${topicFilter === t.id ? C.purple : C.border}`,
-                  background: topicFilter === t.id ? `${C.purple}15` : C.bgHover,
-                  color: topicFilter === t.id ? C.purple : C.textSub,
-                  transition: "all .1s",
-                }}
-              >
-                {t.name} {t.channel_count != null ? `(${t.channel_count})` : ""}
-              </button>
+              <div key={t.id} style={{
+                display: "inline-flex", alignItems: "center", gap: 0,
+                borderRadius: 99, overflow: "hidden",
+                border: `1px solid ${topicFilter === t.id ? C.purple : C.border}`,
+                background: topicFilter === t.id ? `${C.purple}15` : C.bgHover,
+                transition: "all .1s",
+              }}>
+                <button
+                  onClick={() => setTopicFilter(topicFilter === t.id ? "" : t.id)}
+                  style={{
+                    fontSize: 12, fontWeight: 600, padding: "5px 10px 5px 12px",
+                    background: "transparent", border: "none", cursor: "pointer",
+                    color: topicFilter === t.id ? C.purple : C.textSub,
+                    display: "flex", alignItems: "center", gap: 5,
+                  }}
+                >
+                  <Tag size={11} color={topicFilter === t.id ? C.purple : C.textMuted} />
+                  {t.name}
+                  {t.channel_count != null && (
+                    <span style={{ fontSize: 10, opacity: 0.7 }}>({t.channel_count})</span>
+                  )}
+                </button>
+                <button
+                  title={`Xóa chủ đề "${t.name}"`}
+                  onClick={() => {
+                    if (!confirm(`Xóa chủ đề "${t.name}"? Tất cả kênh gắn chủ đề này sẽ bị clear.`)) return;
+                    void deleteTopic.mutateAsync(t.id).then(() => {
+                      toast.success("Đã xóa chủ đề", `"${t.name}" và clear khỏi tất cả kênh`);
+                      if (topicFilter === t.id) setTopicFilter("");
+                    }).catch((err: unknown) => {
+                      toast.error("Lỗi", err instanceof Error ? err.message : "Thử lại");
+                    });
+                  }}
+                  style={{
+                    background: "transparent", border: "none", borderLeft: `1px solid ${C.border}`,
+                    cursor: "pointer", padding: "5px 8px", display: "flex", alignItems: "center",
+                    color: C.textMuted, transition: "color .1s, background .1s",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.color = C.red;
+                    (e.currentTarget as HTMLButtonElement).style.background = `${C.red}15`;
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.color = C.textMuted;
+                    (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                  }}
+                >
+                  <X size={11} />
+                </button>
+              </div>
             ))}
             <button
               onClick={() => setTopicFilter("")}
               style={{
-                fontSize: 11, padding: "3px 10px", borderRadius: 99, cursor: "pointer",
+                fontSize: 12, padding: "5px 12px", borderRadius: 99, cursor: "pointer",
                 border: `1px solid ${!topicFilter ? C.blue : C.border}`,
                 background: !topicFilter ? `${C.blue}15` : "transparent",
                 color: !topicFilter ? C.blue : C.textMuted,
@@ -879,25 +969,47 @@ export default function CmsDetailPage() {
         {/* Search */}
         <div style={{ position: "relative", flex: "1 1 180px", minWidth: 160 }}>
           <input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Tìm kênh..."
+            placeholder="Tên kênh / UC..."
             style={{ width: "100%", height: 32, padding: "0 10px", borderRadius: 8, boxSizing: "border-box",
               border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
         </div>
 
-        {/* Views > */}
-        <div style={{ position: "relative", flex: "0 0 130px" }}>
-          <input value={minViews} onChange={(e) => setMinViews(e.target.value)}
-            type="number" min={0} placeholder="Views ≥"
-            style={{ width: "100%", height: 32, padding: "0 10px", borderRadius: 8, boxSizing: "border-box",
-              border: `1px solid ${minViews ? C.cyan : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
+        {/* Views range */}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 11, color: C.textMuted, whiteSpace: "nowrap" }}>Views</span>
+          <div style={{ position: "relative" }}>
+            <span style={{ position: "absolute", left: 7, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: C.textMuted, pointerEvents: "none" }}>{">"}</span>
+            <input value={minViews} onChange={(e) => setMinViews(e.target.value)}
+              type="number" min={0} placeholder="min"
+              style={{ width: 84, height: 32, padding: "0 6px 0 18px", borderRadius: 8, boxSizing: "border-box",
+                border: `1px solid ${minViews ? C.cyan : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
+          </div>
+          <div style={{ position: "relative" }}>
+            <span style={{ position: "absolute", left: 7, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: C.textMuted, pointerEvents: "none" }}>{"<"}</span>
+            <input value={maxViews} onChange={(e) => setMaxViews(e.target.value)}
+              type="number" min={0} placeholder="max"
+              style={{ width: 84, height: 32, padding: "0 6px 0 18px", borderRadius: 8, boxSizing: "border-box",
+                border: `1px solid ${maxViews ? C.cyan : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
+          </div>
         </div>
 
-        {/* Revenue > */}
-        <div style={{ position: "relative", flex: "0 0 130px" }}>
-          <input value={minRevenue} onChange={(e) => setMinRevenue(e.target.value)}
-            type="number" min={0} placeholder="Revenue ≥ $"
-            style={{ width: "100%", height: 32, padding: "0 10px", borderRadius: 8, boxSizing: "border-box",
-              border: `1px solid ${minRevenue ? C.amber : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
+        {/* Revenue range */}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 11, color: C.textMuted, whiteSpace: "nowrap" }}>Revenue</span>
+          <div style={{ position: "relative" }}>
+            <span style={{ position: "absolute", left: 7, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: C.textMuted, pointerEvents: "none" }}>{">"}</span>
+            <input value={minRevenue} onChange={(e) => setMinRevenue(e.target.value)}
+              type="number" min={0} placeholder="min"
+              style={{ width: 84, height: 32, padding: "0 6px 0 18px", borderRadius: 8, boxSizing: "border-box",
+                border: `1px solid ${minRevenue ? C.amber : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
+          </div>
+          <div style={{ position: "relative" }}>
+            <span style={{ position: "absolute", left: 7, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: C.textMuted, pointerEvents: "none" }}>{"<"}</span>
+            <input value={maxRevenue} onChange={(e) => setMaxRevenue(e.target.value)}
+              type="number" min={0} placeholder="max"
+              style={{ width: 84, height: 32, padding: "0 6px 0 18px", borderRadius: 8, boxSizing: "border-box",
+                border: `1px solid ${maxRevenue ? C.amber : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
+          </div>
         </div>
 
         {/* Status */}
@@ -927,8 +1039,8 @@ export default function CmsDetailPage() {
         </select>
 
         {/* Reset */}
-        {(search || minViews || minRevenue || statusFilter || monoFilter || topicFilter) && (
-          <button onClick={() => { setSearch(""); setMinViews(""); setMinRevenue(""); setStatusFilter(""); setMonoFilter(""); setTopicFilter(""); setSelectedIds(new Set()); }}
+        {(search || minViews || maxViews || minRevenue || maxRevenue || statusFilter || monoFilter || topicFilter) && (
+          <button onClick={() => { setSearch(""); setMinViews(""); setMaxViews(""); setMinRevenue(""); setMaxRevenue(""); setStatusFilter(""); setMonoFilter(""); setTopicFilter(""); setSelectedIds(new Set()); }}
             style={{ height: 32, padding: "0 12px", borderRadius: 8, fontSize: 12, cursor: "pointer",
               border: `1px solid ${C.border}`, background: C.bgCard, color: C.red }}>
             Xóa bộ lọc
