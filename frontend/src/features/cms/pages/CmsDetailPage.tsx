@@ -1,11 +1,12 @@
-﻿import { useState, useRef } from "react";
+﻿import { useState, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronLeft, History, Tv, Upload, CheckCircle, AlertCircle, UserCog, Building2, ArrowRightLeft, Tag, Plus, Server, Trash2, Search } from "lucide-react";
+import { ChevronLeft, History, Tv, Upload, CheckCircle, AlertCircle, UserCog, Building2, ArrowRightLeft, Tag, Plus, Server, Trash2, Search, Loader2, ShieldCheck } from "lucide-react";
 import { C } from "@/styles/theme";
 import { Button, Pill, Card, Input, EmptyState, StatusDot, Modal, Field } from "@/components/ui";
 import { useCms, useCmsStats, useCmsChannels, useTopics, useCmsList, useCreateTopic, useClearCmsChannels } from "@/api/cms.api";
-import { useBulkImportChannels, useUpdateChannel, useBulkEditChannels } from "@/api/channels.api";
+import { useBulkImportChannels, useUpdateChannel, useBulkEditChannels, useCreateChannel, useValidateYtChannel } from "@/api/channels.api";
+import type { YtValidateResult } from "@/api/channels.api";
 import { usePartnerList } from "@/api/partners.api";
 import { useToast } from "@/stores/notificationStore";
 import { fmt, fmtCurrency } from "@/lib/format";
@@ -536,6 +537,156 @@ function ImportChannelModal({ open, onClose, cmsId }: { open: boolean; onClose: 
   );
 }
 
+// ── Add single channel modal ──────────────────────────────────────
+function AddChannelModal({
+  cmsId, onClose, onCreate, isPending,
+}: {
+  cmsId: string;
+  onClose: () => void;
+  onCreate: (data: import("@/types/channel").ChannelCreate) => Promise<void>;
+  isPending: boolean;
+}) {
+  const [form, setForm] = useState({ yt_id: "", name: "", country: "VN", status: "Active", monetization: "Off" });
+  const [ytInfo, setYtInfo] = useState<YtValidateResult["channel"] | null>(null);
+  const [ytError, setYtError] = useState<string | null>(null);
+  const validateMut = useValidateYtChannel();
+  const toast = useToast();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Auto-validate with 700ms debounce
+  useEffect(() => {
+    const id = form.yt_id.trim();
+    setYtInfo(null); setYtError(null);
+    if (!id || id.length < 10) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await validateMut.mutateAsync(id);
+        if (res.valid && res.channel) {
+          setYtInfo(res.channel);
+          setForm((f) => ({
+            ...f,
+            name:    f.name || res.channel!.name,
+            country: res.channel!.country ?? f.country,
+          }));
+        } else {
+          setYtError(res.message ?? "Channel không tồn tại");
+        }
+      } catch (err) {
+        setYtError(err instanceof Error ? err.message : "Lỗi kiểm tra");
+      }
+    }, 700);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.yt_id]);
+
+  const handleSubmit = async () => {
+    if (!form.name.trim()) { toast.error("Lỗi", "Tên kênh không được để trống"); return; }
+    try {
+      await onCreate({ ...form, cms_id: cmsId });
+    } catch (err) { toast.error("Lỗi", err instanceof Error ? err.message : "Thử lại"); }
+  };
+
+  const fmt = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : String(n);
+
+  const validateIcon = validateMut.isPending
+    ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
+    : ytInfo
+      ? <CheckCircle size={14} color={C.green} />
+      : ytError
+        ? <AlertCircle size={14} color={C.red} />
+        : <ShieldCheck size={14} />;
+
+  return (
+    <Modal open onClose={onClose} title="Thêm kênh mới" width={500}
+      footer={<>
+        <Button variant="ghost" size="sm" onClick={onClose}>Huỷ</Button>
+        <Button variant="primary" size="sm" loading={isPending} onClick={handleSubmit} icon={<Plus size={14} />}>Thêm kênh</Button>
+      </>}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+        {/* UC input — validate icon appended inside the field */}
+        <Field label="YouTube Channel ID (UC)">
+          <div style={{ position: "relative" }}>
+            <Input
+              value={form.yt_id}
+              onChange={(e) => setForm((f) => ({ ...f, yt_id: e.target.value }))}
+              placeholder="UCxxxxxxxxxxxxxxxxxxxxxxxx"
+              autoFocus
+              style={{
+                paddingRight: 36,
+                borderColor: ytInfo ? C.green : ytError ? C.red : undefined,
+              }}
+            />
+            <span style={{
+              position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+              color: ytInfo ? C.green : ytError ? C.red : C.textMuted,
+              display: "flex", alignItems: "center", pointerEvents: "none",
+            }}>
+              {validateIcon}
+            </span>
+          </div>
+        </Field>
+
+        {/* Validate result */}
+        {ytInfo && (
+          <div style={{ display: "flex", gap: 10, padding: "10px 12px", background: `${C.green}0d`, border: `1px solid ${C.green}40`, borderRadius: 8 }}>
+            {ytInfo.thumbnail && (
+              <img src={ytInfo.thumbnail} alt="" style={{ width: 44, height: 44, borderRadius: 6, flexShrink: 0, objectFit: "cover" }} />
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                <CheckCircle size={13} color={C.green} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ytInfo.name}</span>
+                {ytInfo.country && <span style={{ fontSize: 10, color: C.textMuted }}>🌐 {ytInfo.country}</span>}
+              </div>
+              <div style={{ display: "flex", gap: 12, fontSize: 11, color: C.textMuted }}>
+                <span>👥 {fmt(ytInfo.subscribers)} subscribers</span>
+                <span>▶ {fmt(ytInfo.videos)} videos</span>
+                <span>👁 {fmt(ytInfo.views)} views</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {ytError && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", background: `${C.red}0d`, border: `1px solid ${C.red}40`, borderRadius: 8, fontSize: 12, color: C.red }}>
+            <AlertCircle size={13} />
+            {ytError}
+          </div>
+        )}
+
+        <Field label="Tên kênh *">
+          <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            placeholder="Tên hiển thị" />
+        </Field>
+        <div style={{ display: "flex", gap: 12 }}>
+          <Field label="Quốc gia" style={{ flex: "0 0 80px" }}>
+            <Input value={form.country}
+              onChange={(e) => setForm((f) => ({ ...f, country: e.target.value.toUpperCase().slice(0, 2) }))}
+              placeholder="VN" maxLength={2} />
+          </Field>
+          <Field label="Status" style={{ flex: 1 }}>
+            <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+              style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: 8, fontSize: 13,
+                border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, outline: "none" }}>
+              {["Active","Pending","Suspended","Terminated"].map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field label="Monetization" style={{ flex: 1 }}>
+            <select value={form.monetization} onChange={(e) => setForm((f) => ({ ...f, monetization: e.target.value }))}
+              style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: 8, fontSize: 13,
+                border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, outline: "none" }}>
+              {["On","Off"].map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function CmsDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -546,6 +697,7 @@ export default function CmsDetailPage() {
   const [minViews, setMinViews]         = useState("");
   const [minRevenue, setMinRevenue]     = useState("");
   const [showImport, setShowImport] = useState(false);
+  const [showAddChannel, setShowAddChannel] = useState(false);
   const [showAssignPartner, setShowAssignPartner] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showTransferCms, setShowTransferCms] = useState(false);
@@ -553,6 +705,7 @@ export default function CmsDetailPage() {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   const clearChannels = useClearCmsChannels(id!);
+  const createChannel = useCreateChannel();
   const toast = useToast();
   const { can } = usePermissions();
 
@@ -578,6 +731,20 @@ export default function CmsDetailPage() {
   return (
     <div style={{ padding: 24 }}>
       <ImportChannelModal open={showImport} onClose={() => setShowImport(false)} cmsId={id!} />
+
+      {/* Add single channel modal */}
+      {showAddChannel && (
+        <AddChannelModal
+          cmsId={id!}
+          onClose={() => setShowAddChannel(false)}
+          onCreate={async (data) => {
+            await createChannel.mutateAsync(data);
+            toast.success("Thành công", "Đã thêm kênh");
+            setShowAddChannel(false);
+          }}
+          isPending={createChannel.isPending}
+        />
+      )}
 
       {/* Clear all channels confirm */}
       {showClearConfirm && (
@@ -772,6 +939,22 @@ export default function CmsDetailPage() {
         <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 4 }}>
           {channels.length} / {totalChannels} kênh
         </span>
+
+        {/* Add channel */}
+        {can("channel:create") && (
+          <button
+            onClick={() => setShowAddChannel(true)}
+            style={{
+              marginLeft: 4, height: 32, padding: "0 12px", borderRadius: 8, fontSize: 12,
+              cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+              border: `1px solid ${C.green}`, background: `${C.green}15`, color: C.green,
+              fontWeight: 600,
+            }}
+          >
+            <Plus size={13} />
+            Thêm kênh
+          </button>
+        )}
       </div>
 
       {(
@@ -842,7 +1025,7 @@ export default function CmsDetailPage() {
                         style={{ accentColor: C.blue, cursor: "pointer" }}
                       />
                     </th>
-                    {(["Channel", "Topic", "Partner", "Status", "Monetization", "Link Date", "Copyright", "Video", "Total Views", "Subscribers", "Revenue", "Last Revenue", ""] as const).map((h) => (
+                    {(["Channel", "Topic", "Partner", "Status", "Monetization", "Link Date", "Copyright", "Video", "Total Views", "Subscribers", "30 Days Revenue", "Last Day Revenue", ""] as const).map((h) => (
                       <th key={h} style={{
                         padding: h === "Copyright" ? "10px 8px" : "10px 16px",
                         width: h === "Copyright" ? 70 : undefined,

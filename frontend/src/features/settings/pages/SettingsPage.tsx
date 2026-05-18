@@ -344,6 +344,163 @@ function AuditTab() {
   );
 }
 
+// ── Google API Key card ──────────────────────────────────────────
+function GoogleApiKeyCard() {
+  const { data: settings = [], isLoading } = useSettings();
+  const setSetting = useSetSetting();
+  const delSetting = useDeleteSetting();
+  const toast = useToast();
+
+  const SETTING_KEY = "GOOGLE_API_KEY";
+
+  // Value stored as JSON array of strings
+  const rawVal = settings.find((s) => s.key === SETTING_KEY)?.value;
+  const keys: string[] = Array.isArray(rawVal)
+    ? rawVal
+    : typeof rawVal === "string" && rawVal.trim().startsWith("[")
+      ? (() => { try { return JSON.parse(rawVal) as string[]; } catch { return [rawVal]; } })()
+      : rawVal ? [rawVal as string] : [];
+
+  const [newKey, setNewKey] = useState("");
+  const [showIdx, setShowIdx] = useState<number | null>(null);
+  const [editIdx, setEditIdx] = useState<number | null>(null);
+  const [editVal, setEditVal] = useState("");
+
+  const save = async (list: string[]) => {
+    await setSetting.mutateAsync({ key: SETTING_KEY, value: JSON.stringify(list) });
+  };
+
+  const handleAdd = async () => {
+    const trimmed = newKey.trim();
+    if (!trimmed) { toast.warning("Thiếu giá trị", "Nhập API Key"); return; }
+    if (keys.includes(trimmed)) { toast.warning("Trùng key", "Key này đã tồn tại"); return; }
+    try {
+      await save([...keys, trimmed]);
+      toast.success("Đã thêm", "Google API Key");
+      setNewKey("");
+    } catch { toast.error("Lỗi", "Không lưu được API Key"); }
+  };
+
+  const handleDelete = async (idx: number) => {
+    const next = keys.filter((_, i) => i !== idx);
+    try {
+      if (next.length === 0) {
+        await delSetting.mutateAsync(SETTING_KEY);
+      } else {
+        await save(next);
+      }
+      toast.success("Đã xóa key");
+      if (showIdx === idx) setShowIdx(null);
+    } catch { toast.error("Lỗi", "Không xóa được"); }
+  };
+
+  const handleEditSave = async (idx: number) => {
+    const trimmed = editVal.trim();
+    if (!trimmed) return;
+    const next = keys.map((k, i) => (i === idx ? trimmed : k));
+    try {
+      await save(next);
+      toast.success("Đã cập nhật key");
+      setEditIdx(null);
+    } catch { toast.error("Lỗi", "Không lưu được"); }
+  };
+
+  const masked = (k: string) => k.slice(0, 8) + "•".repeat(Math.max(0, k.length - 12)) + k.slice(-4);
+
+  return (
+    <div style={{ background: C.bgCard, borderRadius: RADIUS.md, border: `1px solid ${C.border}`, overflow: "hidden", boxShadow: SHADOW.sm }}>
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+        <Key size={14} color={C.amber} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Google API Keys</span>
+        <span style={{ fontSize: 10, color: C.textMuted }}>— YouTube Data API v3 · tự động xoay vòng</span>
+        {keys.length > 0 && (
+          <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, background: `${C.green}20`, color: C.green, padding: "2px 7px", borderRadius: 10 }}>{keys.length} key</span>
+        )}
+      </div>
+
+      <div style={{ padding: 16 }}>
+        {isLoading ? (
+          <div style={{ fontSize: 12, color: C.textMuted }}>Đang tải...</div>
+        ) : (
+          <>
+            {/* Existing keys list */}
+            {keys.length === 0 ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", background: `${C.amber}0d`, border: `1px dashed ${C.amber}50`, borderRadius: RADIUS.sm, marginBottom: 12 }}>
+                <AlertTriangle size={13} color={C.amber} />
+                <span style={{ fontSize: 12, color: C.textSub }}>Chưa có key nào — channel stats sẽ không tự cập nhật</span>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
+                {keys.map((k, idx) => (
+                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm }}>
+                    <span style={{ fontSize: 10, color: C.textMuted, minWidth: 18, textAlign: "right" }}>#{idx + 1}</span>
+                    {editIdx === idx ? (
+                      <>
+                        <input
+                          value={editVal}
+                          onChange={(e) => setEditVal(e.target.value)}
+                          autoFocus
+                          onKeyDown={(e) => { if (e.key === "Enter") void handleEditSave(idx); if (e.key === "Escape") setEditIdx(null); }}
+                          style={{ flex: 1, padding: "4px 8px", background: C.bgInput, border: `1px solid ${C.blue}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 12, outline: "none" }}
+                        />
+                        <button onClick={() => void handleEditSave(idx)} style={{ background: "transparent", border: "none", cursor: "pointer", color: C.green, padding: 2 }}><Check size={13} /></button>
+                        <button onClick={() => setEditIdx(null)} style={{ background: "transparent", border: "none", cursor: "pointer", color: C.textMuted, padding: 2 }}><X size={13} /></button>
+                      </>
+                    ) : (
+                      <>
+                        <code style={{ flex: 1, fontSize: 12, color: C.green, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {showIdx === idx ? k : masked(k)}
+                        </code>
+                        <button onClick={() => setShowIdx(showIdx === idx ? null : idx)}
+                          style={{ background: "transparent", border: "none", cursor: "pointer", color: C.textMuted, padding: 2, display: "flex" }}>
+                          {showIdx === idx ? <EyeOff size={12} /> : <Eye size={12} />}
+                        </button>
+                        <button onClick={() => { setEditIdx(idx); setEditVal(k); }}
+                          style={{ background: "transparent", border: "none", cursor: "pointer", color: C.textMuted, padding: 2, display: "flex" }}>
+                          <Edit2 size={11} />
+                        </button>
+                        <button onClick={() => void handleDelete(idx)}
+                          style={{ background: "transparent", border: "none", cursor: "pointer", color: C.red, padding: 2, display: "flex" }}>
+                          <Trash2 size={11} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add new key input */}
+            <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ position: "relative", flex: 1 }}>
+                <input
+                  type="password"
+                  value={newKey}
+                  onChange={(e) => setNewKey(e.target.value)}
+                  placeholder="Thêm key mới: AIzaSy..."
+                  onKeyDown={(e) => { if (e.key === "Enter") void handleAdd(); }}
+                  style={{ width: "100%", padding: "8px 10px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 12, outline: "none", boxSizing: "border-box" }}
+                  onFocus={(e) => (e.currentTarget.style.borderColor = C.blue)}
+                  onBlur={(e) => (e.currentTarget.style.borderColor = C.border)}
+                />
+              </div>
+              <button
+                onClick={() => void handleAdd()}
+                disabled={setSetting.isPending}
+                style={{ padding: "8px 14px", background: `${C.blue}18`, border: `1px solid ${C.blue}`, borderRadius: RADIUS.sm, cursor: "pointer", color: C.blue, fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                <Plus size={13} /> Thêm
+              </button>
+            </div>
+            <div style={{ marginTop: 8, fontSize: 10, color: C.textMuted }}>
+              Lấy key tại <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" style={{ color: C.blue }}>Google Cloud Console</a> → YouTube Data API v3 · Nhiều key giúp tránh quota limit
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════
 // TAB 3: System Info
 // ═══════════════════════════════════════════════════════
@@ -424,14 +581,18 @@ function SystemTab() {
       </div>
 
       {/* Settings key-value */}
-      <div style={{ background: C.bgCard, borderRadius: RADIUS.md, border: `1px solid ${C.border}`, overflow: "hidden", boxShadow: SHADOW.sm }}>
-        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Settings2 size={14} color={C.purple} />
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Cài đặt hệ thống</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Google API Key card */}
+        <GoogleApiKeyCard />
+
+        <div style={{ background: C.bgCard, borderRadius: RADIUS.md, border: `1px solid ${C.border}`, overflow: "hidden", boxShadow: SHADOW.sm }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Settings2 size={14} color={C.purple} />
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Cài đặt hệ thống</span>
+            </div>
+            <button onClick={() => void refetchSettings()} style={{ background: "transparent", border: "none", cursor: "pointer", color: C.textMuted, display: "flex", padding: 4 }}><RefreshCw size={13} /></button>
           </div>
-          <button onClick={() => void refetchSettings()} style={{ background: "transparent", border: "none", cursor: "pointer", color: C.textMuted, display: "flex", padding: 4 }}><RefreshCw size={13} /></button>
-        </div>
         <div style={{ padding: 16 }}>
           {/* Add new setting */}
           <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
@@ -442,11 +603,11 @@ function SystemTab() {
           {/* List */}
           {sLoading ? (
             <div style={{ color: C.textMuted, fontSize: 13 }}>Đang tải...</div>
-          ) : settings.length === 0 ? (
+          ) : settings.filter((s) => s.key !== "GOOGLE_API_KEY").length === 0 ? (
             <div style={{ color: C.textMuted, fontSize: 12, textAlign: "center", padding: "16px 0" }}>Chưa có cài đặt nào</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {settings.map((s) => (
+              {settings.filter((s) => s.key !== "GOOGLE_API_KEY").map((s) => (
                 <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: C.bg, borderRadius: RADIUS.sm, border: `1px solid ${C.border}` }}>
                   <code style={{ fontSize: 11, color: C.blue, minWidth: 120, flexShrink: 0 }}>{s.key}</code>
                   {editKey === s.key ? (
@@ -467,6 +628,7 @@ function SystemTab() {
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

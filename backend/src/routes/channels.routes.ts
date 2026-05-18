@@ -65,6 +65,75 @@ const listQuerySchema = z.object({
   sortDir:      z.enum(["asc","desc"]).default("asc"),
 });
 
+// ── Validate YouTube channel ID via Google API (key rotation on quota) ──
+router.get("/validate-yt", async (req, res, next) => {
+  try {
+    const ytId = (req.query.yt_id as string | undefined)?.trim();
+    if (!ytId) { res.status(400).json({ error: "Missing yt_id" }); return; }
+
+    // Load API keys from settings
+    const setting = await queryOne<{ value: unknown }>(
+      `SELECT value FROM setting WHERE key='GOOGLE_API_KEY'`
+    );
+    let keys: string[] = [];
+    if (setting?.value) {
+      if (Array.isArray(setting.value)) keys = setting.value as string[];
+      else if (typeof setting.value === "string") {
+        try { keys = JSON.parse(setting.value) as string[]; } catch { keys = [setting.value]; }
+      }
+    }
+    if (keys.length === 0) {
+      res.status(503).json({ error: "Chưa cấu hình Google API Key trong Settings" });
+      return;
+    }
+
+    // Rotate keys — skip those that hit quota
+    let lastError = "Unknown error";
+    for (const apiKey of keys) {
+      const url =
+        `https://www.googleapis.com/youtube/v3/channels` +
+        `?part=snippet,statistics&id=${encodeURIComponent(ytId)}&key=${apiKey}`;
+      const ytRes = await fetch(url);
+      const data = await ytRes.json() as {
+        items?: Array<{
+          id: string;
+          snippet: { title: string; description: string; country?: string; thumbnails?: { default?: { url: string } } };
+          statistics: { subscriberCount?: string; videoCount?: string; viewCount?: string };
+        }>;
+        error?: { code: number; message: string; errors?: Array<{ reason: string }> };
+      };
+
+      if (!ytRes.ok) {
+        const quota = data.error?.errors?.some(
+          (e) => ["quotaExceeded", "dailyLimitExceeded"].includes(e.reason)
+        );
+        if (quota) { lastError = `Key quota exceeded (${apiKey.slice(0, 8)}...)`; continue; }
+        lastError = data.error?.message ?? "YouTube API error";
+        break;
+      }
+
+      const item = data.items?.[0];
+      if (!item) { res.json({ valid: false, message: "Channel không tồn tại trên YouTube" }); return; }
+
+      res.json({
+        valid: true,
+        channel: {
+          yt_id:       item.id,
+          name:        item.snippet.title,
+          description: item.snippet.description,
+          country:     item.snippet.country ?? null,
+          thumbnail:   item.snippet.thumbnails?.default?.url ?? null,
+          subscribers: parseInt(item.statistics.subscriberCount ?? "0", 10),
+          videos:      parseInt(item.statistics.videoCount ?? "0", 10),
+          views:       parseInt(item.statistics.viewCount ?? "0", 10),
+        },
+      });
+      return;
+    }
+    res.status(503).json({ error: `Tất cả API key đã hết quota: ${lastError}` });
+  } catch(e) { next(e); }
+});
+
 router.get("/", validate(listQuerySchema, "query"), async (req, res, next) => {
   try {
     const filters = req.query as Parameters<typeof ChannelService.list>[0];
