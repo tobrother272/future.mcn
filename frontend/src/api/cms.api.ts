@@ -75,7 +75,11 @@ export function useDeleteTopic() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`topics/${id}`).json<{ ok: boolean }>(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["topics"] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["topics"] });
+      void qc.invalidateQueries({ queryKey: ["channels"] });
+      void qc.invalidateQueries({ queryKey: ["cms"] });
+    },
   });
 }
 
@@ -156,8 +160,9 @@ export function useRevokeCmsApiKey(cmsId: string) {
 }
 
 export function useCmsChannels(id: string, params?: PaginationParams & {
-  topic_id?: string; status?: string; monetization?: string;
-  min_views?: number; min_revenue?: number;
+  topic_id?: string; status?: string; monetization?: string; search?: string;
+  min_views?: number; max_views?: number;
+  min_revenue?: number; max_revenue?: number;
 }) {
   return useQuery({
     queryKey: ["cms", id, "channels", params],

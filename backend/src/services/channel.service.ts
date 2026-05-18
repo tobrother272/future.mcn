@@ -16,10 +16,12 @@ interface ChannelFilters {
   cms_id?: string; partner_id?: string; topic_id?: string;
   status?: string; monetization?: string; health?: string;
   search?: string;
+  min_views?: number; max_views?: number;
+  min_revenue?: number; max_revenue?: number;
   page?: number; limit?: number;
   sortBy?: string; sortDir?: "asc" | "desc";
-  /** Giới hạn chỉ lấy kênh thuộc các CMS này (dùng cho Admin/Cấp Kênh employee). */
   cms_ids?: string[];
+  partner_ids?: string[];
 }
 
 
@@ -39,11 +41,24 @@ export const ChannelService = {
       vals.push(filters.cms_id);
     }
     if (filters.partner_id) { andClauses.push(`c.partner_id=$${idx++}`);     vals.push(filters.partner_id); }
+    // partner_ids dùng để scope channel list cho partner user (không cho pass partner_id ngoài phạm vi)
+    if (filters.partner_ids && filters.partner_ids.length > 0 && !filters.partner_id) {
+      const ph = filters.partner_ids.map(() => `$${idx++}`).join(", ");
+      andClauses.push(`c.partner_id IN (${ph})`);
+      vals.push(...filters.partner_ids);
+    }
     if (filters.topic_id)   { andClauses.push(`c.topic_id=$${idx++}`);       vals.push(filters.topic_id); }
     if (filters.status)     { andClauses.push(`c.status=$${idx++}`);         vals.push(filters.status); }
     if (filters.monetization){ andClauses.push(`c.monetization=$${idx++}`);  vals.push(filters.monetization); }
     if (filters.health)     { andClauses.push(`c.health=$${idx++}`);         vals.push(filters.health); }
-    if (filters.search)     { andClauses.push(`c.name ILIKE $${idx++}`);     vals.push(`%${filters.search}%`); }
+    // search theo tên kênh HOẶC UC (yt_id)
+    if (filters.search)     { andClauses.push(`(c.name ILIKE $${idx} OR c.yt_id ILIKE $${idx})`); vals.push(`%${filters.search}%`); idx++; }
+    // range views
+    if (filters.min_views != null) { andClauses.push(`c.monthly_views >= $${idx++}`); vals.push(filters.min_views); }
+    if (filters.max_views != null) { andClauses.push(`c.monthly_views <= $${idx++}`); vals.push(filters.max_views); }
+    // range revenue
+    if (filters.min_revenue != null) { andClauses.push(`c.monthly_revenue >= $${idx++}`); vals.push(filters.min_revenue); }
+    if (filters.max_revenue != null) { andClauses.push(`c.monthly_revenue <= $${idx++}`); vals.push(filters.max_revenue); }
 
     const where = andClauses.length ? `WHERE ${andClauses.join(" AND ")}` : "";
 

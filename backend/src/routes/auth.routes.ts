@@ -65,6 +65,23 @@ router.patch("/me", requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.post("/verify-password", requireAuth, async (req, res, next) => {
+  try {
+    const { password } = req.body as { password: string };
+    if (!password) { res.status(400).json({ error: "Thiếu mật khẩu" }); return; }
+    const { verifyPassword } = await import("../lib/password.js");
+    const { queryOne } = await import("../db/helpers.js");
+    const row = await queryOne<{ password_hash: string }>(
+      `SELECT password_hash FROM account WHERE id=$1`,
+      [req.user!.id]
+    );
+    if (!row) { res.status(404).json({ error: "Tài khoản không tồn tại" }); return; }
+    const valid = await verifyPassword(password, row.password_hash);
+    if (!valid) { res.status(401).json({ error: "Mật khẩu không đúng" }); return; }
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 router.post("/change-password", requireAuth, async (req, res, next) => {
   try {
     const { current_password, new_password } = req.body as { current_password: string; new_password: string };

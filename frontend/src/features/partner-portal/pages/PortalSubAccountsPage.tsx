@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   UserPlus, Users, Mail, Phone, Lock, Save, X,
   KeyRound, ShieldOff, ShieldCheck, RefreshCw, Trash2, Building2,
+  Copy, Check,
 } from "lucide-react";
 import { C, RADIUS, SHADOW } from "@/styles/theme";
 import { Button, Pill, Modal, Input, Field, EmptyState } from "@/components/ui";
@@ -171,6 +172,11 @@ function CreateSubAccountModal({
 }
 
 // ── Reset password modal ──────────────────────────────────────
+function genPassword() {
+  const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%";
+  return Array.from({ length: 14 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+}
+
 function ResetPasswordModal({
   open, onClose, account,
 }: {
@@ -180,64 +186,84 @@ function ResetPasswordModal({
 }) {
   const reset = useResetPartnerSubAccountPassword();
   const toast = useToast();
-  const [pwd, setPwd] = useState("");
-  const [confirm, setConfirm] = useState("");
+  const [generated, setGenerated] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  const close = () => { setPwd(""); setConfirm(""); onClose(); };
+  const close = () => { setGenerated(null); setCopied(false); onClose(); };
 
-  const handleSubmit = async () => {
+  const handleGenerate = async () => {
     if (!account?.account_id) return;
-    if (pwd.length < 8) { toast.warning("Mật khẩu quá ngắn", "Tối thiểu 8 ký tự"); return; }
-    if (pwd !== confirm) { toast.error("Không khớp", "Mật khẩu xác nhận không khớp"); return; }
+    const pwd = genPassword();
     try {
       await reset.mutateAsync({ userId: account.account_id, new_password: pwd });
-      toast.success("Đã đặt lại mật khẩu", `Cho ${account.account_email}`);
-      close();
+      setGenerated(pwd);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Đặt lại mật khẩu thất bại";
+      const msg = err instanceof Error ? err.message : "Tạo mật khẩu thất bại";
       toast.error("Lỗi", msg);
     }
+  };
+
+  const handleCopy = () => {
+    if (!generated) return;
+    void navigator.clipboard.writeText(generated);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
     <Modal
       open={open}
       onClose={close}
-      title="Đặt lại mật khẩu"
+      title="Tạo mật khẩu mới"
       width={420}
-      closeOnOverlay={false}
       footer={
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <Button variant="ghost" size="sm" onClick={close}>Huỷ</Button>
-          <Button variant="primary" size="sm" icon={<KeyRound size={14} />} onClick={() => void handleSubmit()} disabled={reset.isPending}>
-            {reset.isPending ? "Đang đặt..." : "Đặt lại"}
-          </Button>
+          <Button variant="ghost" size="sm" onClick={close}>Đóng</Button>
         </div>
       }
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div style={{ fontSize: 12, color: C.textSub }}>
           Tài khoản: <span style={{ color: C.text, fontWeight: 600 }}>{account?.account_email}</span>
           <br />
           Đối tác con: <span style={{ color: C.text }}>{account?.partner_name}</span>
         </div>
-        <Field label="Mật khẩu mới" required>
-          <Input
-            type="password"
-            value={pwd}
-            onChange={(e) => setPwd(e.target.value)}
-            icon={<Lock size={13} />}
-            autoFocus
-          />
-        </Field>
-        <Field label="Xác nhận mật khẩu" required>
-          <Input
-            type="password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            icon={<Lock size={13} />}
-          />
-        </Field>
+
+        {!generated ? (
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<RefreshCw size={14} />}
+            onClick={() => void handleGenerate()}
+            disabled={reset.isPending}
+          >
+            {reset.isPending ? "Đang tạo..." : "Tạo mật khẩu ngẫu nhiên"}
+          </Button>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 12, color: C.textMuted }}>Mật khẩu mới:</div>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8,
+              background: C.surface, border: `1px solid ${C.border}`,
+              borderRadius: RADIUS.md, padding: "8px 12px",
+            }}>
+              <Lock size={13} color={C.textMuted} />
+              <span style={{ flex: 1, fontFamily: "monospace", fontSize: 14, letterSpacing: 1, color: C.text }}>
+                {generated}
+              </span>
+              <button
+                onClick={handleCopy}
+                title={copied ? "Đã sao chép" : "Sao chép"}
+                style={{ background: "none", border: "none", cursor: "pointer", color: copied ? C.green : C.textMuted, padding: 2 }}
+              >
+                {copied ? <Check size={15} /> : <Copy size={15} />}
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: C.textMuted }}>
+              Lưu mật khẩu này trước khi đóng, hệ thống sẽ không hiển thị lại.
+            </div>
+          </div>
+        )}
       </div>
     </Modal>
   );

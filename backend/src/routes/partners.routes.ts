@@ -41,6 +41,101 @@ router.get("/pending-users", async (req, res, next) => {
   try { res.json(await PartnerService.listPendingUsers()); } catch(e) { next(e); }
 });
 
+// ── Admin: danh sách tất cả tài khoản đối tác ────────────────
+router.get("/accounts", async (req, res, next) => {
+  try {
+    const { queryMany } = await import("../db/helpers.js");
+    const rows = await queryMany(
+      `SELECT
+         a.id, a.email, a.full_name, a.phone,
+         a.status, a.last_login, a.created_at,
+         a.partner_id,
+         p.name    AS partner_name,
+         p.type    AS partner_type,
+         p.status  AS partner_status,
+         p.parent_id AS partner_parent_id,
+         pp.name   AS partner_parent_name
+       FROM account a
+       LEFT JOIN partner p  ON p.id  = a.partner_id
+       LEFT JOIN partner pp ON pp.id = p.parent_id
+       WHERE a.account_type = 'partner'
+         AND (p.parent_id IS NULL OR a.partner_id IS NULL)
+       ORDER BY p.name ASC NULLS LAST, a.created_at ASC`
+    );
+    res.json(rows);
+  } catch(e) { next(e); }
+});
+
+router.patch("/accounts/:userId/status", async (req, res, next) => {
+  try {
+    const { status } = req.body as { status: string };
+    if (!["Active", "Suspended"].includes(status)) {
+      res.status(400).json({ error: "status phải là Active hoặc Suspended" });
+      return;
+    }
+    const { queryOne } = await import("../db/helpers.js");
+    const row = await queryOne(
+      `UPDATE account SET status=$1
+       WHERE id=$2 AND account_type='partner'
+       RETURNING id, email, full_name, status`,
+      [status, req.params.userId]
+    );
+    if (!row) { res.status(404).json({ error: "Không tìm thấy tài khoản" }); return; }
+    res.json(row);
+  } catch(e) { next(e); }
+});
+
+// Gán tài khoản đối tác vào một đối tác (set partner_id)
+router.patch("/accounts/:userId/assign-partner", async (req, res, next) => {
+  try {
+    const { partner_id } = req.body as { partner_id: string | null };
+    const { queryOne } = await import("../db/helpers.js");
+    const row = await queryOne(
+      `UPDATE account SET partner_id=$1
+       WHERE id=$2 AND account_type='partner'
+       RETURNING id, email, full_name, partner_id, status`,
+      [partner_id ?? null, req.params.userId]
+    );
+    if (!row) { res.status(404).json({ error: "Không tìm thấy tài khoản" }); return; }
+    res.json(row);
+  } catch(e) { next(e); }
+});
+
+// Lấy danh sách tài khoản chưa gán partner (để hiện trong modal assign)
+router.get("/accounts/unassigned", async (req, res, next) => {
+  try {
+    const { queryMany } = await import("../db/helpers.js");
+    const rows = await queryMany(
+      `SELECT id, email, full_name, status, created_at
+       FROM account
+       WHERE account_type='partner' AND (partner_id IS NULL OR partner_id='')
+         AND status IN ('Active','PendingApproval')
+       ORDER BY created_at DESC`
+    );
+    res.json(rows);
+  } catch(e) { next(e); }
+});
+
+router.post("/accounts/:userId/reset-password", async (req, res, next) => {
+  try {
+    const { new_password } = req.body as { new_password: string };
+    if (!new_password || new_password.length < 8) {
+      res.status(400).json({ error: "Mật khẩu mới phải có ít nhất 8 ký tự" });
+      return;
+    }
+    const { hashPassword } = await import("../lib/password.js");
+    const { queryOne } = await import("../db/helpers.js");
+    const row = await queryOne(
+      `UPDATE account SET password_hash=$1
+       WHERE id=$2 AND account_type='partner'
+       RETURNING id, email, full_name`,
+      [await hashPassword(new_password), req.params.userId]
+    );
+    if (!row) { res.status(404).json({ error: "Không tìm thấy tài khoản" }); return; }
+    res.json({ ok: true });
+  } catch(e) { next(e); }
+});
+
 // ── Sub-accounts (partner cha quản lý tài khoản cho từng đối tác con) ─────
 // Đặt TRƯỚC mọi route "/:id/..." để tránh router treat "sub-accounts" như partner ID.
 

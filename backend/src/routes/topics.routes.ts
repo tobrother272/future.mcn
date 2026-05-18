@@ -67,15 +67,10 @@ router.put("/:id", requireRole(...ADMIN_ROLES), validate(bodySchema.partial()), 
 });
 
 // DELETE /api/topics/:id — delete (only if no channels assigned)
+// DELETE /api/topics/:id — delete and clear topic from all channels
 router.delete("/:id", requireRole(...ADMIN_ROLES), async (req, res, next) => {
   try {
-    const used = await queryOne<{ cnt: string }>(
-      `SELECT COUNT(*)::text AS cnt FROM channel WHERE topic_id = $1`, [req.params.id]
-    );
-    if (Number(used?.cnt ?? 0) > 0) {
-      res.status(409).json({ error: `Topic đang được dùng bởi ${used!.cnt} kênh, không thể xóa` });
-      return;
-    }
+    await queryOne(`UPDATE channel SET topic_id = NULL WHERE topic_id = $1`, [req.params.id]);
     await queryOne(`DELETE FROM topic WHERE id=$1`, [req.params.id]);
     res.json({ ok: true });
   } catch (e) { next(e); }
