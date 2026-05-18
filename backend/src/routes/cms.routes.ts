@@ -100,7 +100,9 @@ router.get("/:id/channels", async (req, res, next) => {
       search:       req.query.search        as string | undefined,
       topic_id:     req.query.topic_id      as string | undefined,
       min_views:    req.query.min_views     ? Number(req.query.min_views)   : undefined,
+      max_views:    req.query.max_views     ? Number(req.query.max_views)   : undefined,
       min_revenue:  req.query.min_revenue   ? Number(req.query.min_revenue) : undefined,
+      max_revenue:  req.query.max_revenue   ? Number(req.query.max_revenue) : undefined,
     }));
   } catch(e) { next(e); }
 });

@@ -242,3 +242,75 @@ export function useDeletePartnerSubAccount() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["partner-sub-accounts"] }),
   });
 }
+
+// ─────────────────────────────────────────────────────────────
+// Admin: quản lý tất cả tài khoản đối tác
+// ─────────────────────────────────────────────────────────────
+export interface PartnerAccountRow {
+  id: string;
+  email: string;
+  full_name: string;
+  phone: string | null;
+  status: "PendingApproval" | "Active" | "Rejected" | "Suspended";
+  last_login: string | null;
+  created_at: string;
+  partner_id: string | null;
+  partner_name: string | null;
+  partner_type: string | null;
+  partner_status: string | null;
+  partner_parent_id: string | null;
+  partner_parent_name: string | null;
+}
+
+export function useAllPartnerAccounts() {
+  return useQuery({
+    queryKey: ["partner-accounts"],
+    queryFn: () => apiClient.get("partners/accounts").json<PartnerAccountRow[]>(),
+    staleTime: 15_000,
+  });
+}
+
+export function useSetPartnerAccountStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, status }: { userId: string; status: "Active" | "Suspended" }) =>
+      apiClient.patch(`partners/accounts/${userId}/status`, { json: { status } }).json<{ id: string; status: string }>(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["partner-accounts"] }),
+  });
+}
+
+export function useResetPartnerAccountPassword() {
+  return useMutation({
+    mutationFn: ({ userId, new_password }: { userId: string; new_password: string }) =>
+      apiClient.post(`partners/accounts/${userId}/reset-password`, { json: { new_password } }).json<{ ok: true }>(),
+  });
+}
+
+export interface UnassignedAccount {
+  id: string;
+  email: string;
+  full_name: string;
+  status: string;
+  created_at: string;
+}
+
+export function useUnassignedPartnerAccounts() {
+  return useQuery({
+    queryKey: ["partner-accounts-unassigned"],
+    queryFn: () => apiClient.get("partners/accounts/unassigned").json<UnassignedAccount[]>(),
+    staleTime: 10_000,
+  });
+}
+
+export function useAssignPartnerAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, partner_id }: { userId: string; partner_id: string | null }) =>
+      apiClient.patch(`partners/accounts/${userId}/assign-partner`, { json: { partner_id } }).json<{ id: string; partner_id: string | null }>(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["partner-accounts"] });
+      qc.invalidateQueries({ queryKey: ["partner-accounts-unassigned"] });
+      qc.invalidateQueries({ queryKey: ["partners"] });
+    },
+  });
+}
