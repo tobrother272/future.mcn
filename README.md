@@ -76,6 +76,7 @@ Copy-Item -Recurse source\meridian-mcn D:\MCN-6.0\meridian-mcn-restored
 Set-Location D:\MCN-6.0\meridian-mcn-restored
 docker compose build
 docker compose up -d
+
 ```
 
 ---

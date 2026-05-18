@@ -40,11 +40,31 @@ export function useBulkImportChannels() {
   });
 }
 
+export interface YtValidateResult {
+  valid: boolean;
+  message?: string;
+  channel?: {
+    yt_id: string; name: string; description: string;
+    country: string | null; thumbnail: string | null;
+    subscribers: number; videos: number; views: number;
+  };
+}
+
+export function useValidateYtChannel() {
+  return useMutation({
+    mutationFn: (yt_id: string) =>
+      apiClient.get("channels/validate-yt", { searchParams: { yt_id } }).json<YtValidateResult>(),
+  });
+}
+
 export function useCreateChannel() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: ChannelCreate) => apiClient.post("channels", { json: data }).json<Channel>(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["channels"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["channels"] });
+      qc.invalidateQueries({ queryKey: ["cms"] });
+    },
   });
 }
 
