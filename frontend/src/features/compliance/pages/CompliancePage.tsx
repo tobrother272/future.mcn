@@ -880,13 +880,19 @@ const RESULT_TABS = [
 // ── Main Page ─────────────────────────────────────────────────
 export default function CompliancePage() {
   const [search,       setSearch]       = useState("");
-  const [query,        setQuery]        = useState("");
   const [filterResult, setFilterResult] = useState("");
   const [page,         setPage]         = useState(1);
   const toast = useToast();
   const limit = 20;
 
-  const { data, isLoading, refetch } = useViolationList({ search: query || undefined, result: filterResult || undefined, page, limit });
+  // Live search: debounce 300ms
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => { setDebouncedSearch(search); setPage(1); }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const { data, isLoading, refetch } = useViolationList({ search: debouncedSearch || undefined, result: filterResult || undefined, page, limit });
   const deleteMut = useDeleteViolation();
   const [modal, setModal] = useState<"create" | Violation | null>(null);
 
@@ -956,15 +962,16 @@ export default function CompliancePage() {
         </div>
 
         {/* Search */}
-        <form onSubmit={(e) => { e.preventDefault(); setQuery(search); setPage(1); }} style={{ display: "flex", gap: 8, flex: 1 }}>
-          <div style={{ position: "relative", flex: 1, maxWidth: 360 }}>
-            <Search size={13} color={C.textMuted} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm theo tên vi phạm..."
-              style={{ width: "100%", paddingLeft: 34, paddingRight: 12, paddingTop: 8, paddingBottom: 8, background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-          </div>
-          <Button variant="ghost" size="sm" type="submit">Tìm</Button>
-          {query && <Button variant="ghost" size="sm" icon={<X size={12} />} onClick={() => { setSearch(""); setQuery(""); }}>Xóa</Button>}
-        </form>
+        <div style={{ position: "relative", flex: 1, maxWidth: 360 }}>
+          <Search size={13} color={C.textMuted} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm: tên vi phạm, UC, tên kênh, loại vi phạm, chính sách..."
+            style={{ width: "100%", paddingLeft: 34, paddingRight: search ? 30 : 12, paddingTop: 8, paddingBottom: 8, background: C.bgCard, border: `1px solid ${search ? C.blue : C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+          {search && (
+            <button onClick={() => setSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.textMuted, padding: 2, display: "flex" }}>
+              <X size={13} />
+            </button>
+          )}
+        </div>
 
         <span style={{ fontSize: 12, color: C.textMuted, marginLeft: "auto" }}>{total} vi phạm</span>
       </div>
@@ -976,7 +983,7 @@ export default function CompliancePage() {
         <div style={{ textAlign: "center", padding: 60, background: C.bgCard, borderRadius: RADIUS.md, border: `1px solid ${C.border}` }}>
           <AlertTriangle size={36} color={C.textMuted} style={{ marginBottom: 12 }} />
           <p style={{ color: C.textSub, margin: "0 0 12px" }}>
-            {query || filterResult ? "Không tìm thấy vi phạm phù hợp" : "Chưa có vi phạm nào"}
+            {debouncedSearch || filterResult ? "Không tìm thấy vi phạm phù hợp" : "Chưa có vi phạm nào"}
           </p>
           <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setModal("create")}>Thêm vi phạm đầu tiên</Button>
         </div>

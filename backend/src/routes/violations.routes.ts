@@ -118,11 +118,11 @@ router.get("/", async (req, res, next) => {
     if (channel_id) { where.push(`v.channel_id=$${i++}`); vals.push(channel_id); }
     if (policy_id)  { where.push(`v.policy_id=$${i++}`);  vals.push(policy_id); }
     if (result)     { where.push(`v.result=$${i++}`);      vals.push(result); }
-    if (search)     { where.push(`(v.name ILIKE $${i} OR v.content ILIKE $${i})`); vals.push(`%${search}%`); i++; }
+    if (search)     { where.push(`(v.name ILIKE $${i} OR v.content ILIKE $${i} OR v.violation_type ILIKE $${i} OR COALESCE(c.yt_id,'') ILIKE $${i} OR COALESCE(c.name,'') ILIKE $${i} OR COALESCE(p.name,'') ILIKE $${i})`); vals.push(`%${search}%`); i++; }
     const clause    = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const pageLimit = Math.min(200, Number(limit) || 50);
     const offset    = (Math.max(1, Number(page) || 1) - 1) * pageLimit;
-    const countRow  = await queryOne<{ count: string }>(`SELECT COUNT(*)::text AS count FROM violation v ${clause}`, vals);
+    const countRow  = await queryOne<{ count: string }>(`SELECT COUNT(*)::text AS count FROM violation v LEFT JOIN channel c ON v.channel_id = c.id LEFT JOIN policy p ON v.policy_id = p.id ${clause}`, vals);
     const rows      = await queryMany(`${SELECT} ${clause} ORDER BY v.created_at DESC LIMIT $${i} OFFSET $${i + 1}`, [...vals, pageLimit, offset]);
     res.json({ items: rows, total: Number(countRow?.count ?? 0) });
   } catch (e) { next(e); }
