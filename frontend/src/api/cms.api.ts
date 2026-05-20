@@ -163,6 +163,7 @@ export function useCmsChannels(id: string, params?: PaginationParams & {
   topic_id?: string; status?: string; monetization?: string; search?: string;
   min_views?: number; max_views?: number;
   min_revenue?: number; max_revenue?: number;
+  min_last_revenue?: number; max_last_revenue?: number;
 }) {
   return useQuery({
     queryKey: ["cms", id, "channels", params],

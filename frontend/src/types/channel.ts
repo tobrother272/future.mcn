@@ -36,7 +36,7 @@ export interface Channel {
 export interface ChannelCreate {
   cms_id?: string;
   partner_id?: string;
-  topic_id?: string;
+  topic_id?: string | null;
   yt_id?: string;
   name: string;
   country?: string;

@@ -6,6 +6,7 @@ import { CmsApiKeyService } from "../services/cms-api-key.service.js";
 import { validate } from "../middleware/validate.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { auditLogger } from "../middleware/audit.js";
+import { queryOne } from "../db/helpers.js";
 import { NotFoundError } from "../lib/errors.js";
 
 const router = Router();
@@ -103,6 +104,8 @@ router.get("/:id/channels", async (req, res, next) => {
       max_views:    req.query.max_views     ? Number(req.query.max_views)   : undefined,
       min_revenue:  req.query.min_revenue   ? Number(req.query.min_revenue) : undefined,
       max_revenue:  req.query.max_revenue   ? Number(req.query.max_revenue) : undefined,
+      min_last_revenue: req.query.min_last_revenue ? Number(req.query.min_last_revenue) : undefined,
+      max_last_revenue: req.query.max_last_revenue ? Number(req.query.max_last_revenue) : undefined,
     }));
   } catch(e) { next(e); }
 });
@@ -180,11 +183,20 @@ router.post("/:id/api-keys",
       const cms = await CmsService.getById(req.params.id!);
       if (!cms) throw new NotFoundError("CMS not found");
       const body = req.body as z.infer<typeof createApiKeySchema>;
+      // JWT sub may be stale after DB restore — avoid FK on account(id).
+      let created_by: string | null = req.user?.id ?? null;
+      if (created_by) {
+        const acct = await queryOne<{ id: string }>(
+          `SELECT id FROM account WHERE id = $1`,
+          [created_by],
+        );
+        if (!acct) created_by = null;
+      }
       const result = await CmsApiKeyService.create({
         cms_id:     req.params.id!,
         name:       body.name,
         scopes:     body.scopes,
-        created_by: req.user?.id ?? null,
+        created_by,
       });
       // `plaintext` is shown ONLY here — never queryable afterwards.
       res.status(201).json({

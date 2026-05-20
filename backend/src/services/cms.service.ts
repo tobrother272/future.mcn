@@ -1,6 +1,7 @@
 import { query, queryOne, queryMany, buildWhere, buildPagination } from "../db/helpers.js";
 import { NotFoundError, ConflictError } from "../lib/errors.js";
 import { nanoid } from "../lib/nanoid.js";
+import { appendChannelSearchFilter } from "../lib/channel-search.js";
 
 interface Cms { id: string; name: string; currency: string; status: string; notes: string | null; created_at: string; updated_at: string; }
 interface Topic { id: string; cms_id: string | null; name: string; dept: string | null; expected_channels: number; created_at: string; }
@@ -138,6 +139,7 @@ export const CmsService = {
     topic_id?: string;
     min_views?: number; max_views?: number;
     min_revenue?: number; max_revenue?: number;
+    min_last_revenue?: number; max_last_revenue?: number;
   }) {
     await CmsService.getById(id);
     const baseParams: unknown[] = [id];
@@ -146,19 +148,28 @@ export const CmsService = {
 
     if (params.status)      { andClauses.push(`c.status = $${idx++}`);            baseParams.push(params.status); }
     if (params.monetization){ andClauses.push(`c.monetization = $${idx++}`);       baseParams.push(params.monetization); }
-    if (params.search)      { andClauses.push(`(c.name ILIKE $${idx} OR c.yt_id ILIKE $${idx})`); baseParams.push(`%${params.search}%`); idx++; }
+    if (params.search) {
+      const { sql, nextIdx } = appendChannelSearchFilter(params.search, idx, baseParams);
+      andClauses.push(sql);
+      idx = nextIdx;
+    }
     if (params.topic_id)    { andClauses.push(`c.topic_id = $${idx++}`);           baseParams.push(params.topic_id); }
     if (params.min_views != null && params.min_views > 0)     { andClauses.push(`c.monthly_views >= $${idx++}`);    baseParams.push(params.min_views); }
     if (params.max_views != null && params.max_views > 0)     { andClauses.push(`c.monthly_views <= $${idx++}`);    baseParams.push(params.max_views); }
     if (params.min_revenue != null && params.min_revenue > 0) { andClauses.push(`c.monthly_revenue >= $${idx++}`);  baseParams.push(params.min_revenue); }
     if (params.max_revenue != null && params.max_revenue > 0) { andClauses.push(`c.monthly_revenue <= $${idx++}`);  baseParams.push(params.max_revenue); }
+    if (params.min_last_revenue != null && params.min_last_revenue > 0) { andClauses.push(`c.last_revenue >= $${idx++}`); baseParams.push(params.min_last_revenue); }
+    if (params.max_last_revenue != null && params.max_last_revenue > 0) { andClauses.push(`c.last_revenue <= $${idx++}`); baseParams.push(params.max_last_revenue); }
 
     const andSql = andClauses.length ? `AND ${andClauses.join(" AND ")}` : "";
     const pageLimit = Math.min(100, params.limit ?? 50);
     const offset = (Math.max(1, params.page ?? 1) - 1) * pageLimit;
 
     const countRes = await queryOne<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM channel c WHERE c.cms_id = $1 ${andSql}`,
+      `SELECT COUNT(*)::text AS count
+       FROM channel c
+       LEFT JOIN topic t ON c.topic_id = t.id
+       WHERE c.cms_id = $1 ${andSql}`,
       baseParams
     );
     const rows = await queryMany(
