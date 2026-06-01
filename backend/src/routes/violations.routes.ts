@@ -118,7 +118,7 @@ router.get("/", async (req, res, next) => {
     if (channel_id) { where.push(`v.channel_id=$${i++}`); vals.push(channel_id); }
     if (policy_id)  { where.push(`v.policy_id=$${i++}`);  vals.push(policy_id); }
     if (result)     { where.push(`v.result=$${i++}`);      vals.push(result); }
-    if (search)     { where.push(`(v.name ILIKE $${i} OR v.content ILIKE $${i} OR v.violation_type ILIKE $${i} OR COALESCE(c.yt_id,'') ILIKE $${i} OR COALESCE(c.name,'') ILIKE $${i} OR COALESCE(p.name,'') ILIKE $${i})`); vals.push(`%${search}%`); i++; }
+    if (search)     { where.push(`(v.name ILIKE $${i} OR v.content ILIKE $${i} OR v.violation_type ILIKE $${i} OR COALESCE(c.id,'') ILIKE $${i} OR COALESCE(c.yt_id,'') ILIKE $${i} OR COALESCE(c.name,'') ILIKE $${i} OR COALESCE(p.name,'') ILIKE $${i})`); vals.push(`%${search}%`); i++; }
     const clause    = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const pageLimit = Math.min(200, Number(limit) || 50);
     const offset    = (Math.max(1, Number(page) || 1) - 1) * pageLimit;

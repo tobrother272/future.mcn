@@ -17,7 +17,8 @@ import { z } from "zod";
 import { C, RADIUS, SHADOW } from "@/styles/theme";
 import { Button, EmptyState, Modal, Field, Input, Select, Card } from "@/components/ui";
 import { useCmsList, useCmsStats, useCreateCms, useUpdateCms, useDeleteCms,
-  useCmsApiKeys, useCreateCmsApiKey, useRevokeCmsApiKey, useCmsRevenue } from "@/api/cms.api";
+  useCmsApiKeys, useCreateCmsApiKey, useRevokeCmsApiKey, useCmsRevenue,
+  useCmsChannels } from "@/api/cms.api";
 import { apiClient } from "@/api/client";
 import { useToast } from "@/stores/notificationStore";
 import { fmtCurrency, fmt, fmtDate } from "@/lib/format";
@@ -135,24 +136,60 @@ function EditCmsModal({ cms, onClose }: { cms: Cms; onClose: () => void }) {
 function DeleteCmsModal({ cms, onClose }: { cms: Cms; onClose: () => void }) {
   const toast = useToast();
   const deleteCms = useDeleteCms();
+  const channels = useCmsChannels(cms.id, { limit: 200 });
+  const channelList = channels.data?.items ?? [];
+
   const handleDelete = async () => {
     try {
       await deleteCms.mutateAsync(cms.id);
-      toast.success("Đã xóa CMS", cms.name); onClose();
+      toast.success("Đã xóa CMS", `${cms.name} và ${channelList.length} kênh liên quan`);
+      onClose();
     } catch (err) {
       toast.error("Lỗi xóa CMS", err instanceof Error ? err.message : "Thử lại sau");
     }
   };
+
   return (
-    <Modal open onClose={onClose} title="Xác nhận xóa CMS" width={420}
+    <Modal open onClose={onClose} title="Xác nhận xóa CMS" width={460}
       footer={<>
         <Button variant="ghost" size="sm" onClick={onClose}>Huỷ</Button>
         <Button variant="danger" size="sm" loading={deleteCms.isPending} onClick={() => void handleDelete()}>Xóa</Button>
       </>}>
       <div style={{ color: C.text, fontSize: 14, lineHeight: 1.6 }}>
         Bạn có chắc muốn xóa CMS <strong>{cms.name}</strong> ({cms.id})?
+
+        {/* Danh sách kênh sẽ bị xóa */}
+        {channels.isLoading ? (
+          <div style={{ marginTop: 10, fontSize: 12, color: C.textMuted }}>Đang tải danh sách kênh...</div>
+        ) : channelList.length > 0 ? (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.red, marginBottom: 6 }}>
+              {channelList.length} kênh sẽ bị xóa vĩnh viễn:
+            </div>
+            <div style={{
+              maxHeight: 180, overflowY: "auto", borderRadius: RADIUS.sm,
+              border: `1px solid ${C.border}`, background: C.bgCard,
+            }}>
+              {channelList.map((ch, i) => (
+                <div key={ch.id} style={{
+                  padding: "6px 12px", fontSize: 12, color: C.text,
+                  borderBottom: i < channelList.length - 1 ? `1px solid ${C.border}` : "none",
+                  display: "flex", justifyContent: "space-between", gap: 8,
+                }}>
+                  <span style={{ fontWeight: 500 }}>{ch.name}</span>
+                  <span style={{ color: C.textMuted, flexShrink: 0 }}>{ch.id}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginTop: 10, fontSize: 12, color: C.textMuted }}>
+            CMS này không có kênh nào.
+          </div>
+        )}
+
         <div style={{ marginTop: 10, padding: "10px 14px", borderRadius: RADIUS.sm, background: `${C.red}18`, color: C.red, fontSize: 12, border: `1px solid ${C.red}40` }}>
-          Hành động này không thể hoàn tác. Toàn bộ dữ liệu liên quan sẽ bị xóa.
+          Hành động này không thể hoàn tác. Toàn bộ dữ liệu liên quan sẽ bị xóa vĩnh viễn.
         </div>
       </div>
     </Modal>
@@ -370,13 +407,15 @@ function CmsApiKeysModal({ cms, onClose }: { cms: Cms; onClose: () => void }) {
 
 // ── CMS Analytics Modal ───────────────────────────────────────
 function CmsAnalyticsModal({ cms, onClose }: { cms: Cms; onClose: () => void }) {
-  const [period, setPeriod] = useState<PeriodKey>("30");
+  const [period, setPeriod] = useState<PeriodKey>("28");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState(todayInputDate());
   const activeParams = fromDate && toDate
     ? { from: fromDate, to: toDate }
     : periodToParams(period);
-  const { data: raw = [], isLoading } = useCmsRevenue(cms.id, activeParams);
+  const { data: response, isLoading } = useCmsRevenue(cms.id, activeParams);
+  const raw = response?.items ?? [];
+  const periodSummary = response?.period_summary ?? null;
 
   const chartData = raw.map((r) => ({
     date: fmtDate(r.snapshot_date),
@@ -384,8 +423,10 @@ function CmsAnalyticsModal({ cms, onClose }: { cms: Cms; onClose: () => void }) 
     views: Number(r.views),
   }));
 
-  const totalRevenue = raw.reduce((s, r) => s + Number(r.revenue), 0);
-  const totalViews   = raw.reduce((s, r) => s + Number(r.views), 0);
+  const dailyRevenue = raw.reduce((s, r) => s + Number(r.revenue), 0);
+  const dailyViews   = raw.reduce((s, r) => s + Number(r.views), 0);
+  const totalRevenue = periodSummary ? periodSummary.revenue : dailyRevenue;
+  const totalViews   = periodSummary ? periodSummary.views   : dailyViews;
   const avgChannels  = raw.length
     ? Math.round(raw.reduce((s, r) => s + (r.channels_count ?? 0), 0) / raw.length)
     : 0;
@@ -398,7 +439,7 @@ function CmsAnalyticsModal({ cms, onClose }: { cms: Cms; onClose: () => void }) 
           Lịch sử doanh thu tổng hợp từ tất cả kênh trong CMS
         </span>
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {PERIOD_OPTIONS.map((opt) => (
+          {PERIOD_OPTIONS.filter((opt) => !["180", "this_month", "last_month"].includes(opt.key)).map((opt) => (
             <Button key={opt.key} size="sm"
               variant={period === opt.key ? "primary" : "secondary"}
               onClick={() => {
@@ -440,6 +481,14 @@ function CmsAnalyticsModal({ cms, onClose }: { cms: Cms; onClose: () => void }) 
             <div style={{ fontSize: 18, fontWeight: 700, color: k.color }}>{k.value}</div>
           </div>
         ))}
+        {periodSummary && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 0" }}>
+            <span title={`Tổng chính xác từ YT Studio (cập nhật ${periodSummary.captured_date})`}
+              style={{ fontSize: 11, color: C.green, background: `${C.green}22`, borderRadius: 4, padding: "2px 8px", cursor: "default", whiteSpace: "nowrap" }}>
+              YT Studio · {periodSummary.channel_count} kênh
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Chart */}
@@ -464,7 +513,7 @@ function CmsAnalyticsModal({ cms, onClose }: { cms: Cms; onClose: () => void }) 
               <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9, fill: C.textMuted }} tickLine={false}
                 tickFormatter={(v: number) => `${(v / 1_000_000).toFixed(1)}M`} />
               <Tooltip
-                contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
                 formatter={(value: number, name: string) =>
                   name === "Revenue" ? [`${cms.currency} ${value.toFixed(3)}`, name] : [fmt(value), name]
                 }

@@ -38,6 +38,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
   user_agent     TEXT,
   created_at     TIMESTAMPTZ DEFAULT NOW()
 );
+-- Backfill columns that may be missing if the table was created by an older schema
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_id       TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_email    TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS resource_type  TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS resource_id    TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS detail         JSONB;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS ip             TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_agent     TEXT;
 CREATE INDEX IF NOT EXISTS idx_audit_action  ON audit_log(action, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_actor   ON audit_log(actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_log(resource_type, resource_id);

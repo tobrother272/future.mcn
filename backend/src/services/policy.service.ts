@@ -11,12 +11,35 @@ export interface PolicyImage {
 export interface Policy {
   id: string;
   name: string;
+  category: string;
   content: string;
   application: string;
   images: PolicyImage[];
   topic_ids: string[];
   created_at: string;
   updated_at: string;
+}
+
+async function listCategories(): Promise<string[]> {
+  const rows = await queryMany<{ name: string }>("SELECT name FROM policy_category ORDER BY id ASC", []);
+  return rows.map((r) => r.name);
+}
+
+async function createCategory(name: string): Promise<string> {
+  await queryOne(
+    "INSERT INTO policy_category (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
+    [name]
+  );
+  return name;
+}
+
+async function deleteCategory(name: string): Promise<void> {
+  // Reset policies using this category to default
+  await queryOne(
+    "UPDATE policy SET category = 'Youtube Policy' WHERE category = $1",
+    [name]
+  );
+  await queryOne("DELETE FROM policy_category WHERE name = $1", [name]);
 }
 
 /** Normalise whatever is stored in DB → PolicyImage[].
@@ -33,17 +56,15 @@ function normaliseImages(raw: unknown): PolicyImage[] {
 }
 
 export const PolicyService = {
-  async list(params: { search?: string; topic_id?: string; limit?: number; offset?: number } = {}): Promise<{ items: Policy[]; total: number }> {
+  async list(params: { search?: string; topic_id?: string; category?: string; limit?: number; offset?: number } = {}): Promise<{ items: Policy[]; total: number }> {
     const vals: unknown[] = [];
     const clauses: string[] = [];
 
     if (params.search) {
-      // Tách thành từng token, bỏ token rỗng
       const tokens = params.search.trim().split(/\s+/).filter(Boolean);
       for (const token of tokens) {
         vals.push(`%${token}%`);
         const n = vals.length;
-        // unaccent() cho phép tìm không dấu vẫn khớp có dấu (và ngược lại)
         clauses.push(
           `(unaccent(name)        ILIKE unaccent($${n})` +
           ` OR unaccent(application) ILIKE unaccent($${n})` +
@@ -56,6 +77,11 @@ export const PolicyService = {
       vals.push(params.topic_id);
       clauses.push(`$${vals.length} = ANY(topic_ids)`);
     }
+
+    if (params.category) {
+      vals.push(params.category);
+      clauses.push(`category = $${vals.length}`);
+    }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const limit  = Math.min(params.limit  ?? 50, 200);
     const offset = params.offset ?? 0;
@@ -67,7 +93,7 @@ export const PolicyService = {
       `SELECT COUNT(*)::text AS count FROM policy ${where}`, vals
     );
     return {
-      items: rows.map((r) => ({ ...r, images: normaliseImages(r.images), topic_ids: r.topic_ids ?? [] })),
+      items: rows.map((r) => ({ ...r, images: normaliseImages(r.images), topic_ids: r.topic_ids ?? [], category: r.category ?? "Youtube Policy" })),
       total: Number(countRow?.count ?? 0),
     };
   },
@@ -75,25 +101,26 @@ export const PolicyService = {
   async getById(id: string): Promise<Policy | null> {
     const row = await queryOne<Policy>(`SELECT * FROM policy WHERE id=$1`, [id]);
     if (!row) return null;
-    return { ...row, images: normaliseImages(row.images), topic_ids: row.topic_ids ?? [] };
+    return { ...row, images: normaliseImages(row.images), topic_ids: row.topic_ids ?? [], category: row.category ?? "Youtube Policy" };
   },
 
-  async create(data: { name: string; content?: string; application?: string; images?: PolicyImage[]; topic_ids?: string[] }): Promise<Policy> {
+  async create(data: { name: string; category?: string; content?: string; application?: string; images?: PolicyImage[]; topic_ids?: string[] }): Promise<Policy> {
     const id = nanoid("POL");
     const row = await queryOne<Policy>(
-      `INSERT INTO policy (id, name, content, application, images, topic_ids)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [id, data.name, data.content ?? "", data.application ?? "",
+      `INSERT INTO policy (id, name, category, content, application, images, topic_ids)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [id, data.name, data.category ?? "Youtube Policy", data.content ?? "", data.application ?? "",
        JSON.stringify(data.images ?? []), data.topic_ids ?? []]
     );
-    return { ...row!, images: normaliseImages(row!.images), topic_ids: row!.topic_ids ?? [] };
+    return { ...row!, images: normaliseImages(row!.images), topic_ids: row!.topic_ids ?? [], category: row!.category ?? "Youtube Policy" };
   },
 
-  async update(id: string, data: { name?: string; content?: string; application?: string; images?: PolicyImage[]; topic_ids?: string[] }): Promise<Policy | null> {
+  async update(id: string, data: { name?: string; category?: string; content?: string; application?: string; images?: PolicyImage[]; topic_ids?: string[] }): Promise<Policy | null> {
     const sets: string[] = [];
     const vals: unknown[] = [];
     let i = 1;
     if (data.name        !== undefined) { sets.push(`name=$${i++}`);        vals.push(data.name); }
+    if (data.category    !== undefined) { sets.push(`category=$${i++}`);    vals.push(data.category); }
     if (data.content     !== undefined) { sets.push(`content=$${i++}`);     vals.push(data.content); }
     if (data.application !== undefined) { sets.push(`application=$${i++}`); vals.push(data.application); }
     if (data.images      !== undefined) { sets.push(`images=$${i++}`);      vals.push(JSON.stringify(data.images)); }
@@ -106,7 +133,7 @@ export const PolicyService = {
       vals
     );
     if (!row) return null;
-    return { ...row, images: normaliseImages(row.images), topic_ids: row.topic_ids ?? [] };
+    return { ...row, images: normaliseImages(row.images), topic_ids: row.topic_ids ?? [], category: row.category ?? "Youtube Policy" };
   },
 
   async addImages(id: string, newImages: PolicyImage[]): Promise<Policy | null> {
@@ -138,4 +165,8 @@ export const PolicyService = {
     }
     await queryOne(`DELETE FROM policy WHERE id=$1`, [id]);
   },
+
+  listCategories,
+  createCategory,
+  deleteCategory,
 };

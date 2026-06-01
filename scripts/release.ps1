@@ -25,17 +25,23 @@
     Nhãn ghi vào log release, ví dụ "v1.2.0" hoặc "hotfix-cors".
     Mặc định = current git short SHA.
 
+.PARAMETER Env
+    Môi trường deploy: "prod" hoặc "staging" (mặc định: "prod").
+    Load từ .deploy/envs/<Env>.env
+
 .EXAMPLE
     .\scripts\release.ps1
-    .\scripts\release.ps1 -Tag "v1.3.0-rc1"
-    .\scripts\release.ps1 -SkipChecks            # hot reload, đã tự test
+    .\scripts\release.ps1 -Env staging
+    .\scripts\release.ps1 -Env prod -Tag "v1.3.0-rc1"
+    .\scripts\release.ps1 -SkipChecks
 #>
 
 [CmdletBinding()]
 param(
     [switch] $SkipChecks,
     [switch] $SkipBackup,
-    [string] $Tag = ""
+    [string] $Tag = "",
+    [ValidateSet("prod","staging")][string] $Env = "staging"
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,10 +54,19 @@ function Write-Warn2 ($m) { Write-Host "    !!  $m"  -ForegroundColor Yellow }
 function Die         ($m) { Write-Host "ERR  $m"     -ForegroundColor Red; exit 1 }
 
 # ── 0. Sanity ──────────────────────────────────────────────────────────────
-$envFile = Join-Path $repoRoot ".deploy\release.env"
+# Load env file: .deploy/envs/<Env>.env  (preferred) or legacy .deploy/release.env
+$envFile = Join-Path $repoRoot ".deploy\envs\$Env.env"
 if (-not (Test-Path $envFile)) {
-    Die ".deploy\release.env chưa tồn tại. Copy từ .deploy\release.env.example và điền."
+    # Fallback to legacy path (backward-compat)
+    $legacyFile = Join-Path $repoRoot ".deploy\release.env"
+    if (Test-Path $legacyFile) {
+        Write-Warn2 ".deploy\envs\$Env.env not found — using legacy .deploy\release.env"
+        $envFile = $legacyFile
+    } else {
+        Die ".deploy\envs\$Env.env not found. Create from .deploy\envs\env.example"
+    }
 }
+Write-Host "  Env file: $envFile" -ForegroundColor DarkCyan
 
 # Load env file (KEY=VALUE per line, ignore comments).
 $envMap = @{}
@@ -76,7 +91,8 @@ if (-not $Tag) {
 }
 $timestamp = (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')
 $releaseId = "$timestamp`_$Tag"
-Write-Host "Release id: $releaseId" -ForegroundColor Magenta
+Write-Host "  Target env: $Env" -ForegroundColor Magenta
+Write-Host "  Release id: $releaseId" -ForegroundColor Magenta
 
 # ── 1. Local validation ────────────────────────────────────────────────────
 if (-not $SkipChecks) {
@@ -131,12 +147,13 @@ Write-Step "Upload to VPS"
 $env:SSH_HOST = $envMap['SSH_HOST']
 $env:SSH_PORT = $envMap['SSH_PORT']
 $env:SSH_USER = $envMap['SSH_USER']
-$env:SSH_PASS = $envMap['SSH_PASS']
+$env:SSH_PASS = if ($envMap['SSH_PASS'])     { $envMap['SSH_PASS'] }     else { "" }
+$env:SSH_KEY  = if ($envMap['SSH_KEY_FILE']) { $envMap['SSH_KEY_FILE'] } else { "" }
 
-& python .deploy\ssh_exec.py --upload $tarball "/tmp/release-$releaseId.tar.gz"
+& python3 .deploy\ssh_exec.py --upload $tarball "/tmp/release-$releaseId.tar.gz"
 if ($LASTEXITCODE -ne 0) { Die "upload tarball failed" }
 
-& python .deploy\ssh_exec.py --upload "scripts\remote_release.sh" "/tmp/remote_release.sh"
+& python3 .deploy\ssh_exec.py --upload "scripts\remote_release.sh" "/tmp/remote_release.sh"
 if ($LASTEXITCODE -ne 0) { Die "upload remote_release.sh failed" }
 Write-Ok "artifacts uploaded"
 
@@ -147,7 +164,7 @@ if ($SkipBackup) { $skipBkArg = "--skip-backup" }
 
 # Pass release id + flags through environment to remote script.
 $remoteCmd = "RELEASE_ID='$releaseId' DEPLOY_DIR='$($envMap['REMOTE_DEPLOY_DIR'])' bash /tmp/remote_release.sh $skipBkArg 2>&1"
-& python .deploy\ssh_exec.py $remoteCmd --timeout 1800
+& python3 .deploy\ssh_exec.py $remoteCmd --timeout 1800
 $remoteExit = $LASTEXITCODE
 if ($remoteExit -ne 0) {
     Die "remote release failed (exit=$remoteExit). Đã rollback (nếu remote script tới được bước rollback)."

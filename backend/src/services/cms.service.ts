@@ -5,7 +5,7 @@ import { appendChannelSearchFilter } from "../lib/channel-search.js";
 
 interface Cms { id: string; name: string; currency: string; status: string; notes: string | null; created_at: string; updated_at: string; }
 interface Topic { id: string; cms_id: string | null; name: string; dept: string | null; expected_channels: number; created_at: string; }
-interface CmsStats { cms_id: string; cms_name: string; currency: string; total_channels: number; active_channels: number; monetized: number; demonetized: number; critical_channels: number; total_monthly_revenue: number; total_subscribers: number; total_monthly_views: number; partner_count: number; }
+interface CmsStats { cms_id: string; cms_name: string; currency: string; total_channels: number; active_channels: number; monetized: number; demonetized: number; critical_channels: number; total_monthly_revenue: number; total_subscribers: number; total_monthly_views: number; partner_count: number; revenue_90: number; revenue_365: number; revenue_lifetime: number; }
 
 export const CmsService = {
   async list(params: { status?: string; page?: number; limit?: number }) {
@@ -64,8 +64,14 @@ export const CmsService = {
 
   async delete(id: string) {
     await CmsService.getById(id);
+    const channels = await queryMany<{ id: string; name: string }>(
+      `SELECT id, name FROM channel WHERE cms_id = $1 ORDER BY name`, [id]
+    );
+    if (channels.length > 0) {
+      await query(`DELETE FROM channel WHERE cms_id = $1`, [id]);
+    }
     await query(`DELETE FROM cms WHERE id = $1`, [id]);
-    return { ok: true };
+    return { ok: true, deletedChannels: channels };
   },
 
   async getStats(id: string): Promise<CmsStats> {
@@ -79,37 +85,56 @@ export const CmsService = {
          COUNT(c.id) FILTER (WHERE c.monetization='On')::int                     AS monetized,
          COUNT(c.id) FILTER (WHERE c.monetization='Off')::int                    AS demonetized,
          COUNT(c.id) FILTER (WHERE c.health='Critical')::int                     AS critical_channels,
-         COALESCE(SUM(c.monthly_revenue),0)::float8                               AS total_monthly_revenue,
+         COALESCE(SUM(COALESCE(ca_m.monthly_revenue, 0)), 0)::float8             AS total_monthly_revenue,
          COALESCE(SUM(c.subscribers),0)::float8                                  AS total_subscribers,
          COALESCE(SUM(c.monthly_views),0)::float8                                AS total_monthly_views,
-         COUNT(DISTINCT c.partner_id) FILTER (WHERE c.partner_id IS NOT NULL)::int AS partner_count
-       FROM channel c JOIN cms cm ON c.cms_id = cm.id
+         COUNT(DISTINCT c.partner_id) FILTER (WHERE c.partner_id IS NOT NULL)::int AS partner_count,
+         COALESCE(SUM(cap90.revenue),  0)::float8                                AS revenue_90,
+         COALESCE(SUM(cap365.revenue), 0)::float8                                AS revenue_365,
+         COALESCE(SUM(caplt.revenue),  0)::float8                                AS revenue_lifetime
+       FROM channel c
+       JOIN cms cm ON c.cms_id = cm.id
+       LEFT JOIN (
+         SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
+         FROM channel_analytics
+         WHERE date >= CURRENT_DATE - 30 AND date <= CURRENT_DATE - 2
+         GROUP BY channel_id
+       ) ca_m ON ca_m.channel_id = c.id
+       LEFT JOIN (SELECT channel_id, revenue FROM channel_analytics_period WHERE period = '90')       cap90 ON cap90.channel_id = c.id
+       LEFT JOIN (SELECT channel_id, revenue FROM channel_analytics_period WHERE period = '365')      cap365 ON cap365.channel_id = c.id
+       LEFT JOIN (SELECT channel_id, revenue FROM channel_analytics_period WHERE period = 'lifetime') caplt  ON caplt.channel_id = c.id
        WHERE c.cms_id = $1
        GROUP BY c.cms_id, cm.name, cm.currency`,
       [id]
     );
     if (!res) {
       const cms = await CmsService.getById(id);
-      return { cms_id: id, cms_name: cms.name, currency: cms.currency, total_channels:0, active_channels:0, monetized:0, demonetized:0, critical_channels:0, total_monthly_revenue:0, total_subscribers:0, total_monthly_views:0, partner_count:0 };
+      return { cms_id: id, cms_name: cms.name, currency: cms.currency, total_channels:0, active_channels:0, monetized:0, demonetized:0, critical_channels:0, total_monthly_revenue:0, total_subscribers:0, total_monthly_views:0, partner_count:0, revenue_90:0, revenue_365:0, revenue_lifetime:0 };
     }
     return res;
   },
 
-  async getRevenue(id: string, opts: { days?: number; from?: string; to?: string } = {}) {
+  async getRevenue(id: string, opts: { days?: number; from?: string; to?: string; isLifetime?: boolean } = {}) {
     await CmsService.getById(id);
-    const { days = 30, from, to } = opts;
-    const dateFilter = from && to
-      ? `ca.date >= $2::date AND ca.date <= $3::date`
-      : `ca.date >= CURRENT_DATE - ($2::int)`;
-    const params = from && to ? [id, from, to] : [id, days];
+    const { days = 28, from, to, isLifetime } = opts;
+    // +1 to start window 1 day earlier so that with the 2-day tool-lag
+    // a "28-day" request still returns exactly 28 rows (Apr 22–May 19).
+    const filterDays = days + 2;
+    const dateFilter = isLifetime
+      ? `1=1`  // no date filter — all historical data
+      : from && to
+        ? `ca.date >= $2::date AND ca.date <= $3::date`
+        : `ca.date >= CURRENT_DATE - ($2::int) AND ca.date <= CURRENT_DATE - 2`;
+    const params = isLifetime ? [id] : from && to ? [id, from, to] : [id, filterDays];
     // Aggregate from channel_analytics for all channels in this CMS
-    const rows = await queryMany<{ snapshot_date: string; revenue: number; views: number; engaged_views: number; watch_time_hours: number }>(
+    const rows = await queryMany<{ snapshot_date: string; revenue: number; views: number; engaged_views: number; watch_time_hours: number; channels_count: number }>(
       `SELECT
          ca.date                          AS snapshot_date,
          SUM(ca.revenue)::float8          AS revenue,
          SUM(ca.views)::float8            AS views,
          SUM(ca.engaged_views)::float8    AS engaged_views,
-         SUM(ca.watch_time_hours)::float8 AS watch_time_hours
+         SUM(ca.watch_time_hours)::float8 AS watch_time_hours,
+         COUNT(DISTINCT ca.channel_id)::int AS channels_count
        FROM channel_analytics ca
        WHERE ca.cms_id = $1
          AND ${dateFilter}
@@ -119,17 +144,52 @@ export const CmsService = {
     );
     // Fall back to legacy revenue_daily if no channel_analytics data
     if (rows.length > 0) return rows;
-    const legacyFilter = from && to
-      ? `snapshot_date >= $2::date AND snapshot_date <= $3::date`
-      : `snapshot_date >= CURRENT_DATE - ($2::int)`;
+    const legacyFilter = isLifetime
+      ? `1=1`
+      : from && to
+        ? `snapshot_date >= $2::date AND snapshot_date <= $3::date`
+        : `snapshot_date >= CURRENT_DATE - ($2::int)`;
     return queryMany(
       `SELECT snapshot_date, revenue::float8 AS revenue, views::float8 AS views,
-              0::float8 AS engaged_views, 0::float8 AS watch_time_hours
+              0::float8 AS engaged_views, 0::float8 AS watch_time_hours, 0::int AS channels_count
        FROM revenue_daily
        WHERE scope = 'cms' AND scope_id = $1
          AND ${legacyFilter}
        ORDER BY snapshot_date ASC`,
       params
+    );
+  },
+
+  async getRevenueByTopic(id: string) {
+    await CmsService.getById(id);
+    return queryMany<{
+      topic_id: string | null;
+      topic:    string;
+      channel_count: number;
+      monetized_count: number;
+      total_revenue: number;
+      total_last_revenue: number;
+    }>(
+      `SELECT
+         t.id                                                              AS topic_id,
+         COALESCE(t.name, 'Chưa gán topic')                               AS topic,
+         COUNT(c.id)::int                                                  AS channel_count,
+         COUNT(c.id) FILTER (WHERE c.monetization = 'On')::int            AS monetized_count,
+         COALESCE(SUM(COALESCE(ca_m.monthly_revenue, 0)), 0)::float8      AS total_revenue,
+         COALESCE(SUM(c.last_revenue), 0)::float8                         AS total_last_revenue
+       FROM channel c
+       LEFT JOIN topic t ON c.topic_id = t.id
+       LEFT JOIN (
+         SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
+         FROM channel_analytics
+         WHERE date >= CURRENT_DATE - 30 AND date <= CURRENT_DATE - 2
+         GROUP BY channel_id
+       ) ca_m ON ca_m.channel_id = c.id
+       WHERE c.cms_id = $1
+         AND c.status <> 'Terminated'
+       GROUP BY t.id, t.name
+       ORDER BY total_revenue DESC`,
+      [id],
     );
   },
 
@@ -154,10 +214,10 @@ export const CmsService = {
       idx = nextIdx;
     }
     if (params.topic_id)    { andClauses.push(`c.topic_id = $${idx++}`);           baseParams.push(params.topic_id); }
-    if (params.min_views != null && params.min_views > 0)     { andClauses.push(`c.monthly_views >= $${idx++}`);    baseParams.push(params.min_views); }
-    if (params.max_views != null && params.max_views > 0)     { andClauses.push(`c.monthly_views <= $${idx++}`);    baseParams.push(params.max_views); }
-    if (params.min_revenue != null && params.min_revenue > 0) { andClauses.push(`c.monthly_revenue >= $${idx++}`);  baseParams.push(params.min_revenue); }
-    if (params.max_revenue != null && params.max_revenue > 0) { andClauses.push(`c.monthly_revenue <= $${idx++}`);  baseParams.push(params.max_revenue); }
+    if (params.min_views != null && params.min_views > 0)     { andClauses.push(`c.total_views >= $${idx++}`);    baseParams.push(params.min_views); }
+    if (params.max_views != null && params.max_views > 0)     { andClauses.push(`c.total_views <= $${idx++}`);    baseParams.push(params.max_views); }
+    if (params.min_revenue != null && params.min_revenue > 0) { andClauses.push(`COALESCE((SELECT SUM(revenue) FROM channel_analytics WHERE channel_id = c.id AND date >= CURRENT_DATE - 30 AND date <= CURRENT_DATE - 2), 0) >= $${idx++}`);  baseParams.push(params.min_revenue); }
+    if (params.max_revenue != null && params.max_revenue > 0) { andClauses.push(`COALESCE((SELECT SUM(revenue) FROM channel_analytics WHERE channel_id = c.id AND date >= CURRENT_DATE - 30 AND date <= CURRENT_DATE - 2), 0) <= $${idx++}`);  baseParams.push(params.max_revenue); }
     if (params.min_last_revenue != null && params.min_last_revenue > 0) { andClauses.push(`c.last_revenue >= $${idx++}`); baseParams.push(params.min_last_revenue); }
     if (params.max_last_revenue != null && params.max_last_revenue > 0) { andClauses.push(`c.last_revenue <= $${idx++}`); baseParams.push(params.max_last_revenue); }
 
@@ -173,10 +233,21 @@ export const CmsService = {
       baseParams
     );
     const rows = await queryMany(
-      `SELECT c.*, p.name AS partner_name, t.name AS topic_name
+      `SELECT c.*, p.name AS partner_name, t.name AS topic_name,
+              COALESCE(cap.period_revenue, ca_m.monthly_revenue, 0)::float8 AS monthly_revenue
        FROM channel c
        LEFT JOIN partner p ON c.partner_id = p.id
        LEFT JOIN topic t   ON c.topic_id   = t.id
+       LEFT JOIN (
+         SELECT channel_id, revenue::float8 AS period_revenue
+         FROM channel_analytics_period WHERE period = '28'
+       ) cap ON cap.channel_id = c.id
+       LEFT JOIN (
+         SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
+         FROM channel_analytics
+         WHERE date >= CURRENT_DATE - 30 AND date <= CURRENT_DATE - 2
+         GROUP BY channel_id
+       ) ca_m ON ca_m.channel_id = c.id
        WHERE c.cms_id = $1 ${andSql}
        ORDER BY c.name ASC LIMIT $${idx} OFFSET $${idx+1}`,
       [...baseParams, pageLimit, offset]

@@ -10,6 +10,13 @@ CREATE TABLE IF NOT EXISTS partner_contract (
   employee_id      TEXT REFERENCES employee(id) ON DELETE SET NULL,
   created_at       TIMESTAMPTZ DEFAULT NOW()
 );
+-- Backfill columns missing from older schema versions
+ALTER TABLE partner_contract ADD COLUMN IF NOT EXISTS contract_number TEXT;
+ALTER TABLE partner_contract ADD COLUMN IF NOT EXISTS file_name       TEXT NOT NULL DEFAULT '';
+ALTER TABLE partner_contract ADD COLUMN IF NOT EXISTS file_path       TEXT NOT NULL DEFAULT '';
+ALTER TABLE partner_contract ADD COLUMN IF NOT EXISTS file_size       INTEGER DEFAULT 0;
+ALTER TABLE partner_contract ADD COLUMN IF NOT EXISTS upload_date     DATE NOT NULL DEFAULT CURRENT_DATE;
+ALTER TABLE partner_contract ADD COLUMN IF NOT EXISTS employee_id     TEXT REFERENCES employee(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_partner_contract_partner  ON partner_contract(partner_id);
 CREATE INDEX IF NOT EXISTS idx_partner_contract_employee ON partner_contract(employee_id);
 CREATE INDEX IF NOT EXISTS idx_partner_contract_date     ON partner_contract(upload_date DESC);
