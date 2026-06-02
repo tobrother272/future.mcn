@@ -90,6 +90,7 @@ function PartnerRow({
   partner, isChild = false, hasChildren = false, expanded, onToggle,
   dragState, onDragStart, onDragOver, onDragEnd, onDrop,
   onClick, onEdit, onAnalytics, onDetach, onAssignAccount,
+  childChannelCount,
 }: {
   partner: Partner;
   isChild?: boolean;
@@ -106,6 +107,7 @@ function PartnerRow({
   onAnalytics: (p: Partner) => void;
   onDetach?:   (p: Partner) => void;
   onAssignAccount: (p: Partner) => void;
+  childChannelCount?: number;
 }) {
   const [confirming, setConfirming] = useState(false);
   const isDragging = dragState.draggingId === partner.id;
@@ -195,15 +197,21 @@ function PartnerRow({
         )}
       </div>
 
-      {/* Channel count — chỉ hiện cho partner con */}
+      {/* Channel count — chỉ hiện cho partner con; tổng cho parent */}
       <div style={{ minWidth: 64, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {isChild && (
+        {isChild ? (
           <>
             <Youtube size={12} color={C.red} />
             <span style={{ fontSize: 12, fontWeight: 600, color: C.text, marginLeft: 4 }}>{partner.channel_count ?? 0}</span>
             <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 2 }}>kênh</span>
           </>
-        )}
+        ) : childChannelCount != null && childChannelCount > 0 ? (
+          <>
+            <Youtube size={12} color={C.red} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.text, marginLeft: 4 }}>{childChannelCount}</span>
+            <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 2 }}>kênh</span>
+          </>
+        ) : null}
       </div>
 
       {/* Revenue — tổng monthly_revenue tất cả kênh */}
@@ -222,93 +230,73 @@ function PartnerRow({
         {fmtDate(partner.created_at)}
       </div>
 
-      {/* Analytics button */}
-      <button
-        title="Xem analytics doanh thu / view"
-        onClick={(e) => { e.stopPropagation(); onAnalytics(partner); }}
-        style={{
-          background: "none", border: "none", cursor: "pointer",
-          color: C.textMuted, padding: "2px 5px", borderRadius: 4,
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.color = C.amber)}
-        onMouseLeave={(e) => (e.currentTarget.style.color = C.textMuted)}
-      >
-        <BarChart2 size={13} />
-      </button>
-
-      {/* Edit button */}
-      <button
-        title="Sửa thông tin"
-        onClick={(e) => { e.stopPropagation(); onEdit(partner); }}
-        style={{
-          background: "none", border: "none", cursor: "pointer",
-          color: C.textMuted, padding: "2px 5px", borderRadius: 4,
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.color = C.blue)}
-        onMouseLeave={(e) => (e.currentTarget.style.color = C.textMuted)}
-      >
-        <Pencil size={13} />
-      </button>
-
-      {/* Assign Account button — chỉ hiện cho parent */}
-      {!isChild && (
+      {/* Action buttons — fixed width 92px để align giữa parent và child */}
+      <div style={{ width: 92, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 0, flexShrink: 0 }}>
         <button
-          title="Gán tài khoản đối tác"
-          onClick={(e) => { e.stopPropagation(); onAssignAccount(partner); }}
-          style={{
-            background: "none", border: "none", cursor: "pointer",
-            color: C.textMuted, padding: "2px 5px", borderRadius: 4,
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = C.cyan)}
+          title="Xem analytics doanh thu / view"
+          onClick={(e) => { e.stopPropagation(); onAnalytics(partner); }}
+          style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, padding: "2px 5px", borderRadius: 4 }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = C.amber)}
           onMouseLeave={(e) => (e.currentTarget.style.color = C.textMuted)}
         >
-          <UserPlus size={13} />
+          <BarChart2 size={13} />
         </button>
-      )}
 
-      {/* Detach to parent — chỉ hiện cho child row */}
-      {isChild && onDetach && (
-        confirming ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }} onClick={(e) => e.stopPropagation()}>
-            <span style={{ fontSize: 11, color: C.amber, whiteSpace: "nowrap" }}>Unlink?</span>
-            <button
-              title="Xác nhận"
-              onClick={(e) => { e.stopPropagation(); setConfirming(false); onDetach(partner); }}
-              style={{
-                background: `${C.green}20`, border: `1px solid ${C.green}40`,
-                cursor: "pointer", color: C.green, padding: "2px 5px", borderRadius: 4,
-              }}
-            >
-              <Check size={12} />
-            </button>
-            <button
-              title="Huỷ"
-              onClick={(e) => { e.stopPropagation(); setConfirming(false); }}
-              style={{
-                background: `${C.red}20`, border: `1px solid ${C.red}40`,
-                cursor: "pointer", color: C.red, padding: "2px 5px", borderRadius: 4,
-              }}
-            >
-              <X size={12} />
-            </button>
-          </div>
-        ) : (
+        <button
+          title="Sửa thông tin"
+          onClick={(e) => { e.stopPropagation(); onEdit(partner); }}
+          style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, padding: "2px 5px", borderRadius: 4 }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = C.blue)}
+          onMouseLeave={(e) => (e.currentTarget.style.color = C.textMuted)}
+        >
+          <Pencil size={13} />
+        </button>
+
+        {/* Assign Account — chỉ hiện cho parent */}
+        {!isChild ? (
           <button
-            title="Tách thành đối tác độc lập (parent)"
-            onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
-            style={{
-              display: "flex", alignItems: "center", gap: 4,
-              background: `${C.red}15`, border: `1px solid ${C.red}30`,
-              cursor: "pointer", color: C.red,
-              padding: "3px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600,
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = `${C.red}28`; e.currentTarget.style.borderColor = `${C.red}60`; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = `${C.red}15`; e.currentTarget.style.borderColor = `${C.red}30`; }}
+            title="Gán tài khoản đối tác"
+            onClick={(e) => { e.stopPropagation(); onAssignAccount(partner); }}
+            style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, padding: "2px 5px", borderRadius: 4 }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = C.cyan)}
+            onMouseLeave={(e) => (e.currentTarget.style.color = C.textMuted)}
           >
-            <Unlink size={13} />
+            <UserPlus size={13} />
           </button>
-        )
-      )}
+        ) : onDetach ? (
+          /* Detach — chỉ hiện cho child */
+          confirming ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 2 }} onClick={(e) => e.stopPropagation()}>
+              <button
+                title="Xác nhận"
+                onClick={(e) => { e.stopPropagation(); setConfirming(false); onDetach(partner); }}
+                style={{ background: `${C.green}20`, border: `1px solid ${C.green}40`, cursor: "pointer", color: C.green, padding: "2px 5px", borderRadius: 4 }}
+              >
+                <Check size={12} />
+              </button>
+              <button
+                title="Huỷ"
+                onClick={(e) => { e.stopPropagation(); setConfirming(false); }}
+                style={{ background: `${C.red}20`, border: `1px solid ${C.red}40`, cursor: "pointer", color: C.red, padding: "2px 5px", borderRadius: 4 }}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ) : (
+            <button
+              title="Tách thành đối tác độc lập (parent)"
+              onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, padding: "2px 5px", borderRadius: 4 }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = C.red)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = C.textMuted)}
+            >
+              <Unlink size={13} />
+            </button>
+          )
+        ) : (
+          <div style={{ width: 23 }} />
+        )}
+      </div>
 
     </div>
   );
@@ -1184,8 +1172,7 @@ export default function PartnerWorkflowPage() {
           <div style={{ minWidth: 64, fontSize: 11, fontWeight: 600, color: C.textMuted, textAlign: "center" }}>KÊNH</div>
           <div style={{ minWidth: 100, fontSize: 11, fontWeight: 600, color: C.textMuted, textAlign: "right" }}>DOANH THU</div>
           <div style={{ minWidth: 80, fontSize: 11, fontWeight: 600, color: C.textMuted, textAlign: "right" }}>NGÀY TẠO</div>
-          <div style={{ width: 16 }} />
-          <div style={{ width: 16 }} />
+          <div style={{ width: 92 }} />
         </div>
 
         {isLoading ? (
@@ -1214,6 +1201,7 @@ export default function PartnerWorkflowPage() {
                 onEdit={setEditingPartner}
                 onAnalytics={setAnalyticsPartner}
                 onAssignAccount={setAssignAccountPartner}
+                childChannelCount={root.children.reduce((s, c) => s + (c.channel_count ?? 0), 0)}
               />
 
               {/* Children — shown when expanded */}

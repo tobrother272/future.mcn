@@ -1,6 +1,7 @@
 import { query, queryOne, queryMany, buildPagination } from "../db/helpers.js";
 import { NotFoundError } from "../lib/errors.js";
 import { nanoid } from "../lib/nanoid.js";
+import { appendChannelSearchFilter } from "../lib/channel-search.js";
 
 export interface Channel {
   id: string; cms_id: string | null; partner_id: string | null; topic_id: string | null;
@@ -51,8 +52,11 @@ export const ChannelService = {
     if (filters.status)     { andClauses.push(`c.status=$${idx++}`);         vals.push(filters.status); }
     if (filters.monetization){ andClauses.push(`c.monetization=$${idx++}`);  vals.push(filters.monetization); }
     if (filters.health)     { andClauses.push(`c.health=$${idx++}`);         vals.push(filters.health); }
-    // search theo tên kênh HOẶC UC (yt_id)
-    if (filters.search)     { andClauses.push(`(c.name ILIKE $${idx} OR c.yt_id ILIKE $${idx})`); vals.push(`%${filters.search}%`); idx++; }
+    if (filters.search) {
+      const { sql, nextIdx } = appendChannelSearchFilter(filters.search, idx, vals);
+      andClauses.push(sql);
+      idx = nextIdx;
+    }
     // range views
     if (filters.min_views != null) { andClauses.push(`c.monthly_views >= $${idx++}`); vals.push(filters.min_views); }
     if (filters.max_views != null) { andClauses.push(`c.monthly_views <= $${idx++}`); vals.push(filters.max_views); }
@@ -69,7 +73,10 @@ export const ChannelService = {
     );
 
     const countRes = await queryOne<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM channel c ${where}`, vals
+      `SELECT COUNT(*)::text AS count
+       FROM channel c
+       LEFT JOIN topic t ON c.topic_id = t.id
+       ${where}`, vals
     );
     const rows = await queryMany<Channel & { cms_name?: string; partner_name?: string; topic_name?: string }>(
       `SELECT c.*,
