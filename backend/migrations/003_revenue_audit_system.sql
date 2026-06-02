@@ -38,8 +38,34 @@ CREATE TABLE IF NOT EXISTS audit_log (
   user_agent     TEXT,
   created_at     TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_audit_action  ON audit_log(action, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_audit_actor   ON audit_log(actor_id, created_at DESC);
+
+-- Backward-compat: nếu DB cũ đã có audit_log từ init.sql (schema v1.1 thiếu cột),
+-- bổ sung các cột còn thiếu để index bên dưới chạy được.
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_id      TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_email   TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS resource_type TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS resource_id   TEXT;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_agent    TEXT;
+
+-- Migrate dữ liệu từ cột legacy `actor` (init.sql) sang `actor_id` nếu tồn tại.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name='audit_log' AND column_name='actor') THEN
+    UPDATE audit_log SET actor_id = COALESCE(actor_id, actor) WHERE actor IS NOT NULL;
+  END IF;
+END $$;
+
+-- Đổi `detail TEXT` (init.sql) → JSONB nếu còn là TEXT.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name='audit_log' AND column_name='detail' AND data_type='text') THEN
+    ALTER TABLE audit_log
+      ALTER COLUMN detail TYPE JSONB USING NULLIF(detail, '')::JSONB;
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_audit_action   ON audit_log(action, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_actor    ON audit_log(actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_log(resource_type, resource_id);
 
 -- ── Session ───────────────────────────────────────────────────

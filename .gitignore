@@ -13,7 +13,6 @@ build/
 
 # API token dev (ad-hoc)
 .api-token
-
 # Deploy automation scratch dir (chứa secrets + helper scripts, KHÔNG commit)
 .deploy/
 .deploy-secrets.txt
@@ -34,3 +33,9 @@ Thumbs.db
 .tmp-*
 *.bak
 backups/
+scripts/
+.cursor/rules/
+# Release artifacts — file nhạy cảm trong thư mục release (chứa scripts deploy,
+# schema/seed SQL, env, key, archive). KHÔNG commit.
+release/
+release.zip
