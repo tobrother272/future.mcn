@@ -12,39 +12,59 @@ export const RevenueService = {
   },
 
   async getBreakdown(
-    by: "cms" | "channel" | "partner",
-    opts: { period?: number; from?: string; to?: string } = {}
+    by: "cms" | "channel" | "partner" | "topic",
+    opts: { period?: number; from?: string; to?: string; isLifetime?: boolean } = {}
   ) {
-    const { period = 30, from, to } = opts;
+    const { period = 28, from, to, isLifetime = false } = opts;
     const useRange = Boolean(from && to);
-    const dateFilter = useRange
-      ? `rd.snapshot_date >= $1::date AND rd.snapshot_date <= $2::date`
-      : `rd.snapshot_date >= CURRENT_DATE - ($1::int)`;
-    const params = useRange ? [from!, to!] : [period];
+    const filterPeriod = period + 2;
+    const dateFilter = isLifetime
+      ? "1=1"
+      : useRange
+      ? "ca.date >= $1::date AND ca.date <= $2::date"
+      : "ca.date >= CURRENT_DATE - ($1::int) AND ca.date <= CURRENT_DATE - 2";
+    const params = isLifetime ? [] : useRange ? [from!, to!] : [filterPeriod];
+
     if (by === "cms") {
       return queryMany(
-        `SELECT rd.scope_id, cm.name, cm.currency,
-                SUM(rd.revenue)::numeric AS revenue,
-                SUM(rd.views)::bigint AS views,
-                MAX(rd.snapshot_date) AS latest_date
-         FROM revenue_daily rd
-         JOIN cms cm ON rd.scope_id = cm.id
-         WHERE rd.scope='cms' AND ${dateFilter}
-         GROUP BY rd.scope_id, cm.name, cm.currency
+        `SELECT c.cms_id AS scope_id, cm.name, cm.currency,
+                SUM(ca.revenue)::numeric AS revenue,
+                SUM(ca.views)::bigint    AS views,
+                MAX(ca.date)             AS latest_date
+         FROM channel_analytics ca
+         JOIN channel c  ON ca.channel_id = c.id
+         JOIN cms cm     ON c.cms_id = cm.id
+         WHERE ${dateFilter}
+         GROUP BY c.cms_id, cm.name, cm.currency
          ORDER BY revenue DESC`,
         params
       );
     }
     if (by === "partner") {
       return queryMany(
-        `SELECT rd.scope_id, p.name, p.type,
-                SUM(rd.revenue)::numeric AS revenue,
-                SUM(rd.views)::bigint AS views
-         FROM revenue_daily rd
-         JOIN channel c ON rd.scope_id = c.id
-         JOIN partner p ON c.partner_id = p.id
-         WHERE rd.scope='channel' AND ${dateFilter}
-         GROUP BY rd.scope_id, p.name, p.type
+        `SELECT p.id AS scope_id, p.name, p.type,
+                SUM(ca.revenue)::numeric AS revenue,
+                SUM(ca.views)::bigint    AS views
+         FROM channel_analytics ca
+         JOIN channel c  ON ca.channel_id = c.id
+         JOIN partner p  ON c.partner_id = p.id
+         WHERE ${dateFilter}
+         GROUP BY p.id, p.name, p.type
+         ORDER BY revenue DESC`,
+        params
+      );
+    }
+    if (by === "topic") {
+      return queryMany(
+        `SELECT COALESCE(t.id::text, 'unassigned') AS scope_id,
+                COALESCE(t.name, 'Chưa gán topic') AS name,
+                SUM(ca.revenue)::numeric AS revenue,
+                COUNT(DISTINCT ca.channel_id)::int AS channel_count
+         FROM channel_analytics ca
+         JOIN channel c ON ca.channel_id = c.id AND c.status <> 'Terminated'
+         LEFT JOIN topic t ON c.topic_id = t.id
+         WHERE ${dateFilter}
+         GROUP BY t.id, t.name
          ORDER BY revenue DESC`,
         params
       );
@@ -52,12 +72,12 @@ export const RevenueService = {
     // by === "channel"
     return queryMany(
       `SELECT c.id, c.name, c.cms_id, cm.name AS cms_name,
-              SUM(rd.revenue)::numeric AS revenue,
-              SUM(rd.views)::bigint AS views
-       FROM revenue_daily rd
-       JOIN channel c ON rd.scope_id = c.id
+              SUM(ca.revenue)::numeric AS revenue,
+              SUM(ca.views)::bigint    AS views
+       FROM channel_analytics ca
+       JOIN channel c  ON ca.channel_id = c.id
        LEFT JOIN cms cm ON c.cms_id = cm.id
-       WHERE rd.scope='channel' AND ${dateFilter}
+       WHERE ${dateFilter}
        GROUP BY c.id, c.name, c.cms_id, cm.name
        ORDER BY revenue DESC
        LIMIT 100`,
@@ -65,13 +85,16 @@ export const RevenueService = {
     );
   },
 
-  async getSystemDaily(opts: { period?: number; from?: string; to?: string } = {}) {
-    const { period = 30, from, to } = opts;
+  async getSystemDaily(opts: { period?: number; from?: string; to?: string; isLifetime?: boolean } = {}) {
+    const { period = 28, from, to, isLifetime = false } = opts;
     const useRange = Boolean(from && to);
-    const analyticsDateFilter = useRange
+    const filterPeriod = period + 2;
+    const analyticsDateFilter = isLifetime
+      ? "1=1"
+      : useRange
       ? "ca.date >= $1::date AND ca.date <= $2::date"
-      : "ca.date >= CURRENT_DATE - ($1::int)";
-    const analyticsParams = useRange ? [from!, to!] : [period];
+      : "ca.date >= CURRENT_DATE - ($1::int) AND ca.date <= CURRENT_DATE - 2";
+    const analyticsParams = isLifetime ? [] : useRange ? [from!, to!] : [filterPeriod];
     const analyticsRows = await queryMany<{ snapshot_date: string; revenue: number; views: number }>(
       `SELECT
          ca.date AS snapshot_date,
@@ -83,7 +106,9 @@ export const RevenueService = {
        ORDER BY ca.date ASC`,
       analyticsParams
     );
-    const subDateFilter = useRange
+    const subDateFilter = isLifetime
+      ? "1=1"
+      : useRange
       ? "rd.snapshot_date >= $1::date AND rd.snapshot_date <= $2::date"
       : "rd.snapshot_date >= CURRENT_DATE - ($1::int)";
     const subRows = await queryMany<{ snapshot_date: string; subscribers: number }>(
@@ -106,7 +131,9 @@ export const RevenueService = {
       }));
     }
     // Fallback to snapshot table if analytics is not available
-    const fallbackDateFilter = useRange
+    const fallbackDateFilter = isLifetime
+      ? "1=1"
+      : useRange
       ? "rd.snapshot_date >= $1::date AND rd.snapshot_date <= $2::date"
       : "rd.snapshot_date >= CURRENT_DATE - ($1::int)";
     const fallback = await queryMany<{ snapshot_date: string; revenue: number; views: number }>(
@@ -126,6 +153,56 @@ export const RevenueService = {
       revenue: Number(r.revenue ?? 0),
       views: Number(r.views ?? 0),
       subscribers: subMap.get(String(r.snapshot_date)) ?? 0,
+    }));
+  },
+
+  async getEntityDaily(
+    by: "cms" | "partner" | "topic",
+    scopeId: string,
+    opts: { period?: number; from?: string; to?: string; isLifetime?: boolean } = {}
+  ) {
+    const { period = 28, from, to, isLifetime = false } = opts;
+    const useRange = Boolean(from && to);
+    const filterPeriod = period + 2;
+
+    const dateParams: unknown[] = isLifetime ? [] : useRange ? [from!, to!] : [filterPeriod];
+    const isUnassigned = scopeId === "unassigned";
+    const entityParamIdx = dateParams.length + 1;
+    const params: unknown[] = isUnassigned ? [...dateParams] : [...dateParams, scopeId];
+
+    const dateFilter = isLifetime
+      ? "1=1"
+      : useRange
+      ? "ca.date >= $1::date AND ca.date <= $2::date"
+      : `ca.date >= CURRENT_DATE - ($1::int) AND ca.date <= CURRENT_DATE - 2`;
+
+    const entityFilter =
+      by === "cms"
+        ? `c.cms_id = $${entityParamIdx}`
+        : by === "partner"
+        ? `c.partner_id = $${entityParamIdx}`
+        : isUnassigned
+        ? `c.topic_id IS NULL`
+        : `c.topic_id = $${entityParamIdx}`;
+
+    const rows = await queryMany<{ snapshot_date: string; revenue: number; views: number }>(
+      `SELECT
+         ca.date AS snapshot_date,
+         COALESCE(SUM(ca.revenue), 0)::float8 AS revenue,
+         COALESCE(SUM(ca.views), 0)::float8   AS views
+       FROM channel_analytics ca
+       JOIN channel c ON ca.channel_id = c.id
+       WHERE ${dateFilter} AND ${entityFilter}
+       GROUP BY ca.date
+       ORDER BY ca.date ASC`,
+      params
+    );
+
+    return rows.map((r) => ({
+      snapshot_date: r.snapshot_date,
+      revenue: Number(r.revenue ?? 0),
+      views: Number(r.views ?? 0),
+      subscribers: 0,
     }));
   },
 
@@ -160,9 +237,19 @@ export const RevenueService = {
     const date = new Date().toISOString().slice(0, 10);
     let count = 0;
 
-    // Channel snapshots
+    // Channel snapshots — compute monthly_revenue from channel_analytics
     const channels = await queryMany<{ id: string; monthly_revenue: number; monthly_views: number; subscribers: number }>(
-      `SELECT id, monthly_revenue, monthly_views, subscribers FROM channel`
+      `SELECT c.id,
+              COALESCE(ca_m.monthly_revenue, 0) AS monthly_revenue,
+              c.monthly_views,
+              c.subscribers
+       FROM channel c
+       LEFT JOIN (
+         SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
+         FROM channel_analytics
+         WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
+         GROUP BY channel_id
+       ) ca_m ON ca_m.channel_id = c.id`
     );
     for (const ch of channels) {
       await query(
@@ -175,14 +262,21 @@ export const RevenueService = {
       count++;
     }
 
-    // CMS aggregate snapshots
+    // CMS aggregate snapshots — compute revenue from channel_analytics
     const cmsAgg = await queryMany<{ cms_id: string; revenue: number; views: number; total: number; active: number; currency: string }>(
       `SELECT c.cms_id, cm.currency,
-              COALESCE(SUM(c.monthly_revenue),0)::numeric AS revenue,
+              COALESCE(SUM(COALESCE(ca_m.monthly_revenue, 0)), 0)::numeric AS revenue,
               COALESCE(SUM(c.monthly_views),0)::bigint    AS views,
               COUNT(c.id)::int                            AS total,
               COUNT(c.id) FILTER (WHERE c.status='Active')::int AS active
-       FROM channel c JOIN cms cm ON c.cms_id = cm.id
+       FROM channel c
+       JOIN cms cm ON c.cms_id = cm.id
+       LEFT JOIN (
+         SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
+         FROM channel_analytics
+         WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
+         GROUP BY channel_id
+       ) ca_m ON ca_m.channel_id = c.id
        WHERE c.cms_id IS NOT NULL
        GROUP BY c.cms_id, cm.currency`
     );
@@ -198,13 +292,21 @@ export const RevenueService = {
       count++;
     }
 
-    // Partner aggregate snapshots
+    // Partner aggregate snapshots — compute revenue from channel_analytics
     const partnerAgg = await queryMany<{ partner_id: string; revenue: number; views: number; total: number }>(
       `SELECT c.partner_id,
-              COALESCE(SUM(c.monthly_revenue),0)::numeric AS revenue,
+              COALESCE(SUM(COALESCE(ca_m.monthly_revenue, 0)), 0)::numeric AS revenue,
               COALESCE(SUM(c.monthly_views),0)::bigint    AS views,
               COUNT(c.id)::int                            AS total
-       FROM channel c WHERE c.partner_id IS NOT NULL GROUP BY c.partner_id`
+       FROM channel c
+       LEFT JOIN (
+         SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
+         FROM channel_analytics
+         WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
+         GROUP BY channel_id
+       ) ca_m ON ca_m.channel_id = c.id
+       WHERE c.partner_id IS NOT NULL
+       GROUP BY c.partner_id`
     );
     for (const p of partnerAgg) {
       await query(

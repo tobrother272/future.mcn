@@ -18,18 +18,32 @@ router.get("/", async (req, res, next) => {
 
 router.get("/breakdown", async (req, res, next) => {
   try {
-    const by = (req.query.by as "cms" | "channel" | "partner") ?? "cms";
-    const period = Math.min(365, Number(req.query.period) || 30);
+    const by = (req.query.by as "cms" | "channel" | "partner" | "topic") ?? "cms";
     const { from, to } = req.query as { from?: string; to?: string };
-    res.json(await RevenueService.getBreakdown(by, { period, from, to }));
+    const isLifetime = req.query.period === "lifetime";
+    const period = isLifetime ? 0 : Math.min(365, Number(req.query.period) || 30);
+    res.json(await RevenueService.getBreakdown(by, { period, from, to, isLifetime }));
   } catch(e) { next(e); }
 });
 
 router.get("/system-daily", async (req, res, next) => {
   try {
-    const period = Math.min(365, Number(req.query.period) || 30);
     const { from, to } = req.query as { from?: string; to?: string };
-    res.json(await RevenueService.getSystemDaily({ period, from, to }));
+    const isLifetime = req.query.period === "lifetime";
+    const period = isLifetime ? 0 : Math.min(365, Number(req.query.period) || 30);
+    res.json(await RevenueService.getSystemDaily({ period, from, to, isLifetime }));
+  } catch(e) { next(e); }
+});
+
+router.get("/entity-daily", async (req, res, next) => {
+  try {
+    const by = req.query.by as "cms" | "partner" | "topic";
+    const id = req.query.id as string;
+    if (!by || !id) { res.status(400).json({ error: "by and id required" }); return; }
+    const { from, to } = req.query as { from?: string; to?: string };
+    const isLifetime = req.query.period === "lifetime";
+    const period = isLifetime ? 0 : Math.min(365, Number(req.query.period) || 30);
+    res.json(await RevenueService.getEntityDaily(by, id, { period, from, to, isLifetime }));
   } catch(e) { next(e); }
 });
 

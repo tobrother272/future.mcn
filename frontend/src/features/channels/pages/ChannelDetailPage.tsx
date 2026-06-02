@@ -199,7 +199,7 @@ function ImportVideoModal({ open, onClose, channelId }: { open: boolean; onClose
 export default function ChannelDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [period, setPeriod] = useState<PeriodKey>("30");
+  const [period, setPeriod] = useState<PeriodKey>("28");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState(todayInputDate());
   const [importOpen, setImportOpen] = useState(false);
@@ -210,7 +210,7 @@ export default function ChannelDetailPage() {
     : periodToParams(period);
   const selectedPeriodLabel = fromDate && toDate
     ? `${fromDate} → ${toDate}`
-    : (PERIOD_OPTIONS.find((p) => p.key === period)?.label ?? "30 ngày");
+    : (PERIOD_OPTIONS.find((p) => p.key === period)?.label ?? "28 ngày");
 
   const { data: ch, isLoading } = useChannel(id!);
   const { data: analytics } = useChannelAnalytics(id!, params);
@@ -224,6 +224,10 @@ export default function ChannelDetailPage() {
 
   const analyticsItems = analytics?.items ?? [];
   const summary = analytics?.summary;
+  // For 90/365-day views: use authoritative period summary if available,
+  // otherwise fall back to aggregated daily summary.
+  const periodSummary = analytics?.period_summary;
+  const displaySummary = periodSummary ?? summary;
 
   const chartData = analyticsItems.map((r) => ({
     date: fmtDate(r.date),
@@ -233,7 +237,7 @@ export default function ChannelDetailPage() {
     watch_h: Number(r.watch_time_hours),
   })).reverse(); // oldest → newest for chart
 
-  const totalRevenue = summary?.total_revenue ?? 0;
+  const totalRevenue = displaySummary?.total_revenue ?? 0;
   const videos = videosData?.items ?? [];
   const totalVideos = videosData?.total ?? 0;
   const totalPages = Math.ceil(totalVideos / VIDEO_LIMIT);
@@ -255,6 +259,7 @@ export default function ChannelDetailPage() {
             <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{ch.name}</h1>
             <StatusDot status={ch.status} />
             <StatusDot status={ch.monetization} />
+            {ch.is_unlinked && <Pill color="amber">Unlink</Pill>}
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
             {ch.yt_id && (
@@ -268,6 +273,25 @@ export default function ChannelDetailPage() {
               <Pill color="red">{ch.strikes} strike{ch.strikes > 1 ? "s" : ""}</Pill>
             )}
           </div>
+          {ch.is_unlinked && (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: C.amber,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <AlertCircle size={13} />
+              <span>
+                Kênh đã unlink khỏi Studio, hệ thống vẫn giữ lịch sử doanh thu.
+                {ch.unlinked_at ? ` (${fmtDate(ch.unlinked_at)})` : ""}
+                {ch.unlink_reason ? ` · ${ch.unlink_reason}` : ""}
+              </span>
+            </div>
+          )}
         </div>
         <div style={{ fontSize: 12, color: C.textMuted, textAlign: "right" }}>
           <div>CMS: <span style={{ color: C.text, fontWeight: 600 }}>{ch.cms_name ?? "—"}</span></div>
@@ -297,24 +321,30 @@ export default function ChannelDetailPage() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Doanh thu theo ngày</div>
-            {summary && analyticsItems.length > 0 && (
-              <div style={{ display: "flex", gap: 16, marginTop: 6 }}>
+            {displaySummary && analyticsItems.length > 0 && (
+              <div style={{ display: "flex", gap: 16, marginTop: 6, alignItems: "center" }}>
                 {[
-                  { label: "Views", value: fmt(summary.total_views), color: C.blue },
-                  { label: "Engaged", value: fmt(summary.total_engaged), color: C.cyan },
-                  { label: "Watch (h)", value: Number(summary.total_watch_hours).toFixed(1), color: C.purple },
-                  { label: "Revenue", value: fmtCurrency(summary.total_revenue), color: C.amber },
+                  { label: "Views", value: fmt(displaySummary.total_views), color: C.blue },
+                  { label: "Engaged", value: fmt(displaySummary.total_engaged), color: C.cyan },
+                  { label: "Watch (h)", value: Number(displaySummary.total_watch_hours).toFixed(1), color: C.purple },
+                  { label: "Revenue", value: fmtCurrency(displaySummary.total_revenue), color: C.amber },
                 ].map(({ label, value, color }) => (
                   <div key={label}>
                     <span style={{ fontSize: 10, color: C.textMuted }}>{label} </span>
                     <span style={{ fontSize: 12, fontWeight: 700, color }}>{value}</span>
                   </div>
                 ))}
+                {periodSummary && (
+                  <span title={`Tổng từ YouTube Studio (cập nhật ${periodSummary.captured_date})`}
+                    style={{ fontSize: 10, color: C.green, background: `${C.green}22`, borderRadius: 4, padding: "1px 6px", cursor: "default" }}>
+                    YT Studio
+                  </span>
+                )}
               </div>
             )}
           </div>
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            {PERIOD_OPTIONS.map((opt) => (
+            {PERIOD_OPTIONS.filter((opt) => !["180", "this_month", "last_month"].includes(opt.key)).map((opt) => (
               <Button
                 key={opt.key}
                 size="sm"
@@ -360,7 +390,7 @@ export default function ChannelDetailPage() {
                   tickFormatter={(v: number) => v >= 1000 ? `${(v/1000).toFixed(0)}K` : String(v)} />
                 <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: C.textMuted }} tickLine={false}
                   tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
-                <Tooltip contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                <Tooltip contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
                   formatter={(value: number, name: string) => {
                     if (name === "Revenue ($)") return [`$${value.toFixed(2)}`, name];
                     return [fmt(value), name];
@@ -389,8 +419,8 @@ export default function ChannelDetailPage() {
                       onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                     >
                       <td style={{ padding: "6px 12px", color: C.textSub, whiteSpace: "nowrap" }}>{fmtDate(row.date)}</td>
-                      <td style={{ padding: "6px 12px", color: C.blue,    textAlign: "right" }}>{fmt(row.views)}</td>
-                      <td style={{ padding: "6px 12px", color: C.cyan,    textAlign: "right" }}>{fmt(row.engaged_views)}</td>
+                      <td style={{ padding: "6px 12px", color: C.blue,    textAlign: "right" }}>{Number(row.views).toLocaleString("en-US")}</td>
+                      <td style={{ padding: "6px 12px", color: C.cyan,    textAlign: "right" }}>{Number(row.engaged_views).toLocaleString("en-US")}</td>
                       <td style={{ padding: "6px 12px", color: C.textSub, textAlign: "right" }}>{Number(row.watch_time_hours).toFixed(1)}</td>
                       <td style={{ padding: "6px 12px", color: C.textSub, textAlign: "right" }}>{row.avg_view_duration ?? "—"}</td>
                       <td style={{ padding: "6px 12px", color: C.amber,   textAlign: "right", fontWeight: 600 }}>{fmtCurrency(row.revenue)}</td>

@@ -50,8 +50,14 @@ export const PartnerService = {
        LEFT JOIN (
          SELECT partner_id,
                 COUNT(*)::int            AS cnt,
-                SUM(monthly_revenue)     AS rev
-         FROM channel
+                COALESCE(SUM(ca_m.monthly_revenue), 0)::float8 AS rev
+         FROM channel c2
+         LEFT JOIN (
+           SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
+           FROM channel_analytics
+           WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
+           GROUP BY channel_id
+         ) ca_m ON ca_m.channel_id = c2.id
          GROUP BY partner_id
        ) ch ON ch.partner_id = p.id
        ${where} ORDER BY p.name ASC LIMIT $${idx} OFFSET $${idx+1}`,
@@ -124,15 +130,32 @@ export const PartnerService = {
   async getProfile(id: string) {
     const partner = await PartnerService.getById(id);
     const [channels, contracts, users, revenue, children] = await Promise.all([
-      queryMany(`SELECT id,name,status,monetization,monthly_revenue,subscribers FROM channel WHERE partner_id=$1`, [id]),
+      queryMany(`SELECT c.id, c.name, c.status, c.monetization,
+                        COALESCE(ca_m.monthly_revenue, 0)::float8 AS monthly_revenue,
+                        c.subscribers
+                 FROM channel c
+                 LEFT JOIN (
+                   SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
+                   FROM channel_analytics
+                   WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
+                   GROUP BY channel_id
+                 ) ca_m ON ca_m.channel_id = c.id
+                 WHERE c.partner_id IN (SELECT id FROM partner WHERE id=$1 OR parent_id=$1)`, [id]),
       queryMany(`SELECT id,contract_name,type,status,start_date,end_date,rev_share FROM contract WHERE partner_id=$1`, [id]),
       queryMany(
         `SELECT id,email,full_name,status,last_login FROM account
          WHERE account_type='partner' AND partner_id=$1`, [id]
       ),
       queryOne<{ total: string }>(
-        `SELECT COALESCE(SUM(monthly_revenue),0)::text AS total
-         FROM channel WHERE partner_id IN (SELECT id FROM partner WHERE id=$1 OR parent_id=$1)`, [id]
+        `SELECT COALESCE(SUM(COALESCE(ca_m.monthly_revenue, 0)), 0)::text AS total
+         FROM channel c
+         LEFT JOIN (
+           SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
+           FROM channel_analytics
+           WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
+           GROUP BY channel_id
+         ) ca_m ON ca_m.channel_id = c.id
+         WHERE c.partner_id IN (SELECT id FROM partner WHERE id=$1 OR parent_id=$1)`, [id]
       ),
       queryMany<Partner>(
         `SELECT p.*, pp.name AS parent_name FROM partner p LEFT JOIN partner pp ON p.parent_id = pp.id WHERE p.parent_id=$1 ORDER BY p.name`, [id]

@@ -5,7 +5,7 @@ import { ChevronLeft, History, Tv, Upload, CheckCircle, AlertCircle, UserCog, Bu
 import { C } from "@/styles/theme";
 import { Button, Pill, Card, Input, EmptyState, StatusDot, Modal, Field } from "@/components/ui";
 import { useCms, useCmsStats, useCmsChannels, useTopics, useCmsList, useCreateTopic, useClearCmsChannels, useDeleteTopic } from "@/api/cms.api";
-import { useBulkImportChannels, useUpdateChannel, useBulkEditChannels, useCreateChannel, useValidateYtChannel } from "@/api/channels.api";
+import { useBulkImportChannels, useUpdateChannel, useBulkEditChannels, useCreateChannel, useValidateYtChannel, useBulkDeleteChannels } from "@/api/channels.api";
 import type { YtValidateResult } from "@/api/channels.api";
 import { usePartnerList } from "@/api/partners.api";
 import { useToast } from "@/stores/notificationStore";
@@ -37,7 +37,7 @@ function parseChannelCSV(text: string, cms_id: string): Array<Record<string, unk
   const lines = text.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return [];
 
-  const headers = splitCSVLine(lines[0]).map((h) => h.toLowerCase());
+  const headers = splitCSVLine(lines[0] ?? "").map((h) => h.toLowerCase());
 
   // Detect column indices
   const idxYtId    = headers.findIndex((h) => h === "channel");
@@ -48,7 +48,7 @@ function parseChannelCSV(text: string, cms_id: string): Array<Record<string, unk
   const rows: Array<Record<string, unknown>> = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const cols = splitCSVLine(lines[i]);
+    const cols = splitCSVLine(lines[i] ?? "");
     const ytId = idxYtId >= 0 ? cols[idxYtId] : "";
     const name = idxName >= 0 ? cols[idxName] : "";
 
@@ -152,10 +152,12 @@ function TransferCmsModal({
 function AssignPartnerModal({
   channelIds,
   cmsId,
+  initialPartnerId,
   onClose,
 }: {
   channelIds: string[];
   cmsId: string;
+  initialPartnerId?: string;
   onClose: () => void;
 }) {
   const toast    = useToast();
@@ -165,8 +167,11 @@ function AssignPartnerModal({
 
   const childPartners: Partner[] = (data?.items ?? []).filter((p) => !!p.parent_id);
 
-  const [selectedId, setSelectedId] = useState<string>("");
+  const [selectedId, setSelectedId] = useState<string>(initialPartnerId ?? "");
   const [search, setSearch]         = useState("");
+
+  const isUnassign = selectedId === "" && !!initialPartnerId;
+  const canConfirm = selectedId !== "" || isUnassign;
 
   const filtered = childPartners.filter((p) =>
     !search || p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -174,6 +179,7 @@ function AssignPartnerModal({
   );
 
   const handleSave = async () => {
+    if (!canConfirm) return;
     try {
       const res = await bulkEdit.mutateAsync({
         ids: channelIds,
@@ -199,8 +205,9 @@ function AssignPartnerModal({
         <>
           <Button variant="ghost" size="sm" onClick={onClose}>Hủy</Button>
           <Button variant="primary" size="sm" loading={bulkEdit.isPending}
+            disabled={!canConfirm}
             onClick={() => void handleSave()}>
-            {selectedId ? `Gán partner (${channelIds.length})` : `Bỏ partner (${channelIds.length})`}
+            {isUnassign ? `Bỏ partner (${channelIds.length})` : `Gán partner (${channelIds.length})`}
           </Button>
         </>
       }
@@ -211,18 +218,6 @@ function AssignPartnerModal({
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm partner..."
           style={{ width: "100%", paddingLeft: 30, paddingRight: 10, paddingTop: 7, paddingBottom: 7, background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
       </div>
-
-      {/* Bỏ partner */}
-      <label style={{
-        display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
-        borderRadius: 8, border: `1px solid ${selectedId === "" ? C.amber : C.border}`,
-        background: selectedId === "" ? `${C.amber}10` : C.bgCard,
-        cursor: "pointer", marginBottom: 8,
-      }}>
-        <input type="radio" name="partner" value="" checked={selectedId === ""}
-          onChange={() => setSelectedId("")} style={{ accentColor: C.amber }} />
-        <span style={{ fontSize: 13, color: C.textMuted, fontStyle: "italic" }}>Bỏ partner (không gán)</span>
-      </label>
 
       {filtered.length === 0 ? (
         <div style={{ fontSize: 13, color: C.textMuted, textAlign: "center", padding: "16px 0" }}>
@@ -240,6 +235,7 @@ function AssignPartnerModal({
               <input type="radio" name="partner" value={p.id}
                 checked={selectedId === p.id}
                 onChange={() => setSelectedId(p.id)}
+                onClick={() => { if (selectedId === p.id) setSelectedId(""); }}
                 style={{ accentColor: C.blue }} />
               <div style={{ width: 26, height: 26, borderRadius: 6, background: `${C.blue}20`,
                 display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -602,7 +598,7 @@ function AddChannelModal({
   onCreate: (data: import("@/types/channel").ChannelCreate) => Promise<void>;
   isPending: boolean;
 }) {
-  const [form, setForm] = useState({ yt_id: "", name: "", country: "VN", status: "Active", monetization: "Off" });
+  const [form, setForm] = useState<{ yt_id: string; name: string; country: string; status: import("@/types/channel").ChannelStatus; monetization: import("@/types/channel").MonetizationStatus }>({ yt_id: "", name: "", country: "VN", status: "Active", monetization: "Off" });
   const [ytInfo, setYtInfo] = useState<YtValidateResult["channel"] | null>(null);
   const [ytError, setYtError] = useState<string | null>(null);
   const validateMut = useValidateYtChannel();
@@ -724,14 +720,14 @@ function AddChannelModal({
               placeholder="VN" maxLength={2} />
           </Field>
           <Field label="Status" style={{ flex: 1 }}>
-            <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+            <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as import("@/types/channel").ChannelStatus }))}
               style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: 8, fontSize: 13,
                 border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, outline: "none" }}>
               {["Active","Pending","Suspended","Terminated"].map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </Field>
           <Field label="Monetization" style={{ flex: 1 }}>
-            <select value={form.monetization} onChange={(e) => setForm((f) => ({ ...f, monetization: e.target.value }))}
+            <select value={form.monetization} onChange={(e) => setForm((f) => ({ ...f, monetization: e.target.value as import("@/types/channel").MonetizationStatus }))}
               style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: 8, fontSize: 13,
                 border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, outline: "none" }}>
               {["On","Off"].map((s) => <option key={s} value={s}>{s}</option>)}
@@ -754,6 +750,8 @@ export default function CmsDetailPage() {
   const [maxRevenue, setMaxRevenue]     = useState("");
   const [minLastRevenue, setMinLastRevenue] = useState("");
   const [maxLastRevenue, setMaxLastRevenue] = useState("");
+  const [minViews, setMinViews]         = useState("");
+  const [maxViews, setMaxViews]         = useState("");
   const [showImport, setShowImport] = useState(false);
   const [showAddChannel, setShowAddChannel] = useState(false);
   const [showAssignPartner, setShowAssignPartner] = useState(false);
@@ -761,8 +759,10 @@ export default function CmsDetailPage() {
   const [showTransferCms, setShowTransferCms] = useState(false);
   const [showAssignTopic, setShowAssignTopic] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showDeleteSelectedConfirm, setShowDeleteSelectedConfirm] = useState(false);
 
-  const clearChannels = useClearCmsChannels(id!);
+  const clearChannels  = useClearCmsChannels(id!);
+  const bulkDelete     = useBulkDeleteChannels();
   const createChannel = useCreateChannel();
   const deleteTopic  = useDeleteTopic();
   const toast = useToast();
@@ -779,6 +779,8 @@ export default function CmsDetailPage() {
     ...(maxRevenue  ? { max_revenue: Number(maxRevenue)}: {}),
     ...(minLastRevenue ? { min_last_revenue: Number(minLastRevenue) } : {}),
     ...(maxLastRevenue ? { max_last_revenue: Number(maxLastRevenue) } : {}),
+    ...(minViews    ? { min_views: Number(minViews) }   : {}),
+    ...(maxViews    ? { max_views: Number(maxViews) }   : {}),
     limit: 100,
   });
   const { data: topics } = useTopics();
@@ -832,8 +834,48 @@ export default function CmsDetailPage() {
           </div>
         </Modal>
       )}
+
+      {/* Delete selected channels confirm */}
+      {showDeleteSelectedConfirm && (
+        <Modal open onClose={() => setShowDeleteSelectedConfirm(false)} title={`Xoá ${selectedIds.size} kênh đã chọn`} width={440}
+          footer={<>
+            <Button variant="ghost" size="sm" onClick={() => setShowDeleteSelectedConfirm(false)}>Huỷ</Button>
+            <Button variant="danger" size="sm" loading={bulkDelete.isPending} disabled={bulkDelete.isPending}
+              onClick={() => {
+                void bulkDelete.mutateAsync([...selectedIds]).then((r) => {
+                  toast.success("Đã xoá kênh", `${r.deleted} kênh đã bị xoá`);
+                  setSelectedIds(new Set());
+                  setShowDeleteSelectedConfirm(false);
+                }).catch((err) => {
+                  toast.error("Lỗi xoá kênh", err instanceof Error ? err.message : "Thử lại");
+                });
+              }}>
+              Xoá {selectedIds.size} kênh
+            </Button>
+          </>}>
+          <div style={{ fontSize: 14, color: C.text, lineHeight: 1.7 }}>
+            Bạn có chắc muốn xoá <strong>{selectedIds.size} kênh đã chọn</strong>?
+            <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 6, background: `${C.red}15`, color: C.red, fontSize: 12, border: `1px solid ${C.red}35` }}>
+              ⚠️ Hành động này không thể hoàn tác. Dữ liệu doanh thu và vi phạm liên quan sẽ bị xoá vĩnh viễn.
+            </div>
+          </div>
+        </Modal>
+      )}
       {showAssignPartner && (
-        <AssignPartnerModal channelIds={[...selectedIds]} cmsId={id!} onClose={() => { setShowAssignPartner(false); setSelectedIds(new Set()); }} />
+        <AssignPartnerModal
+          channelIds={[...selectedIds]}
+          cmsId={id!}
+          initialPartnerId={(() => {
+            const ids = [...selectedIds];
+            const firstPartner = channels.find((c) => c.id === ids[0])?.partner_id;
+            if (!firstPartner) return undefined;
+            const allSame = ids.every(
+              (id) => channels.find((c) => c.id === id)?.partner_id === firstPartner
+            );
+            return allSame ? firstPartner : undefined;
+          })()}
+          onClose={() => { setShowAssignPartner(false); setSelectedIds(new Set()); }}
+        />
       )}
       {showTransferCms && (
         <TransferCmsModal
@@ -971,7 +1013,10 @@ export default function CmsDetailPage() {
           { label: "Active",          value: fmt(stats?.active_channels),            color: C.green },
           { label: "Monetized",       value: fmt(stats?.monetized),                  color: C.cyan },
           { label: "Demonetized",     value: fmt(stats?.demonetized),                color: C.red },
-          { label: "Revenue",         value: fmtCurrency(stats?.total_monthly_revenue, cms.currency), color: C.amber },
+          { label: "Revenue 28 ngày", value: fmtCurrency(stats?.total_monthly_revenue, cms.currency), color: C.amber },
+          { label: "Revenue 90 ngày", value: stats?.revenue_90 ? fmtCurrency(stats.revenue_90, cms.currency) : "—", color: C.amber },
+          { label: "Revenue 365 ngày",value: stats?.revenue_365 ? fmtCurrency(stats.revenue_365, cms.currency) : "—", color: C.amber },
+          { label: "Revenue Lifetime",value: stats?.revenue_lifetime ? fmtCurrency(stats.revenue_lifetime, cms.currency) : "—", color: C.orange },
           { label: "Subscribers",     value: fmt(stats?.total_subscribers),          color: C.purple },
         ].map(({ label, value, color }) => (
           <Card key={label} padding="14px 16px">
@@ -982,51 +1027,76 @@ export default function CmsDetailPage() {
       </div>
 
       {/* ── Filter bar ── */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
-        {/* Search */}
-        <div style={{ position: "relative", flex: "1 1 180px", minWidth: 160 }}>
-          <input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Tìm: tên, UC, Topic, Views, Revenue, Last Rev..."
-              title="Tìm theo tên kênh, UC, tên Topic, số Views (monthly/total), Revenue tháng hoặc Last Revenue (ngày gần nhất)"
-            style={{ width: "100%", height: 32, padding: "0 10px", borderRadius: 8, boxSizing: "border-box",
-              border: `1px solid ${C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
-        </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+
+        {/* Search — compact, fixed width */}
+        <input value={search} onChange={(e) => setSearch(e.target.value)}
+          placeholder="Tìm: tên, UC, Topic, Views, Revenue..."
+          title="Tìm theo tên kênh, UC, tên Topic, số Views, Revenue tháng, Last Revenue"
+          style={{ width: 220, height: 32, padding: "0 10px", borderRadius: 8, boxSizing: "border-box",
+            border: `1px solid ${search ? C.blue : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none", flexShrink: 0 }} />
+
+        {/* Divider */}
+        <div style={{ width: 1, height: 20, background: C.border, flexShrink: 0 }} />
 
         {/* Revenue range */}
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 11, color: C.textMuted, whiteSpace: "nowrap" }}>Revenue</span>
+          <span style={{ fontSize: 11, color: C.textMuted, whiteSpace: "nowrap" }}>Rev</span>
           <div style={{ position: "relative" }}>
-            <span style={{ position: "absolute", left: 7, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: C.textMuted, pointerEvents: "none" }}>{">"}</span>
+            <span style={{ position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: C.textMuted, pointerEvents: "none" }}>{">"}</span>
             <input value={minRevenue} onChange={(e) => setMinRevenue(e.target.value)}
               type="number" min={0} placeholder="min"
-              style={{ width: 84, height: 32, padding: "0 6px 0 18px", borderRadius: 8, boxSizing: "border-box",
+              style={{ width: 72, height: 32, padding: "0 4px 0 16px", borderRadius: 8, boxSizing: "border-box",
                 border: `1px solid ${minRevenue ? C.amber : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
           </div>
           <div style={{ position: "relative" }}>
-            <span style={{ position: "absolute", left: 7, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: C.textMuted, pointerEvents: "none" }}>{"<"}</span>
+            <span style={{ position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: C.textMuted, pointerEvents: "none" }}>{"<"}</span>
             <input value={maxRevenue} onChange={(e) => setMaxRevenue(e.target.value)}
               type="number" min={0} placeholder="max"
-              style={{ width: 84, height: 32, padding: "0 6px 0 18px", borderRadius: 8, boxSizing: "border-box",
+              style={{ width: 72, height: 32, padding: "0 4px 0 16px", borderRadius: 8, boxSizing: "border-box",
                 border: `1px solid ${maxRevenue ? C.amber : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
           </div>
         </div>
 
         {/* Last Revenue range */}
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 11, color: C.textMuted, whiteSpace: "nowrap" }} title="Doanh thu ngày gần nhất">Last Rev</span>
+          <span style={{ fontSize: 11, color: C.textMuted, whiteSpace: "nowrap" }} title="Doanh thu ngày gần nhất">Last</span>
           <div style={{ position: "relative" }}>
-            <span style={{ position: "absolute", left: 7, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: C.textMuted, pointerEvents: "none" }}>{">"}</span>
+            <span style={{ position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: C.textMuted, pointerEvents: "none" }}>{">"}</span>
             <input value={minLastRevenue} onChange={(e) => setMinLastRevenue(e.target.value)}
               type="number" min={0} placeholder="min"
-              style={{ width: 84, height: 32, padding: "0 6px 0 18px", borderRadius: 8, boxSizing: "border-box",
+              style={{ width: 72, height: 32, padding: "0 4px 0 16px", borderRadius: 8, boxSizing: "border-box",
                 border: `1px solid ${minLastRevenue ? C.amber : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
           </div>
           <div style={{ position: "relative" }}>
-            <span style={{ position: "absolute", left: 7, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: C.textMuted, pointerEvents: "none" }}>{"<"}</span>
+            <span style={{ position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: C.textMuted, pointerEvents: "none" }}>{"<"}</span>
             <input value={maxLastRevenue} onChange={(e) => setMaxLastRevenue(e.target.value)}
               type="number" min={0} placeholder="max"
-              style={{ width: 84, height: 32, padding: "0 6px 0 18px", borderRadius: 8, boxSizing: "border-box",
+              style={{ width: 72, height: 32, padding: "0 4px 0 16px", borderRadius: 8, boxSizing: "border-box",
                 border: `1px solid ${maxLastRevenue ? C.amber : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
+          </div>
+        </div>
+
+        {/* Views range */}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 11, color: C.textMuted, whiteSpace: "nowrap" }} title="Total views">Views</span>
+          <div style={{ position: "relative" }}>
+            <span style={{ position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: C.textMuted, pointerEvents: "none" }}>{">"}</span>
+            <input
+              value={minViews ? Number(minViews).toLocaleString("de-DE") : ""}
+              onChange={(e) => setMinViews(e.target.value.replace(/\./g, "").replace(/[^\d]/g, ""))}
+              placeholder="min"
+              style={{ width: 88, height: 32, padding: "0 4px 0 16px", borderRadius: 8, boxSizing: "border-box",
+                border: `1px solid ${minViews ? C.cyan : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
+          </div>
+          <div style={{ position: "relative" }}>
+            <span style={{ position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: C.textMuted, pointerEvents: "none" }}>{"<"}</span>
+            <input
+              value={maxViews ? Number(maxViews).toLocaleString("de-DE") : ""}
+              onChange={(e) => setMaxViews(e.target.value.replace(/\./g, "").replace(/[^\d]/g, ""))}
+              placeholder="max"
+              style={{ width: 88, height: 32, padding: "0 4px 0 16px", borderRadius: 8, boxSizing: "border-box",
+                border: `1px solid ${maxViews ? C.cyan : C.border}`, background: C.bgCard, color: C.text, fontSize: 12, outline: "none" }} />
           </div>
         </div>
 
@@ -1057,16 +1127,16 @@ export default function CmsDetailPage() {
         </select>
 
         {/* Reset */}
-        {(search || minRevenue || maxRevenue || minLastRevenue || maxLastRevenue || statusFilter || monoFilter || topicFilter) && (
-          <button onClick={() => { setSearch(""); setMinRevenue(""); setMaxRevenue(""); setMinLastRevenue(""); setMaxLastRevenue(""); setStatusFilter(""); setMonoFilter(""); setTopicFilter(""); setSelectedIds(new Set()); }}
+        {(search || minRevenue || maxRevenue || minLastRevenue || maxLastRevenue || minViews || maxViews || statusFilter || monoFilter || topicFilter) && (
+          <button onClick={() => { setSearch(""); setMinRevenue(""); setMaxRevenue(""); setMinLastRevenue(""); setMaxLastRevenue(""); setMinViews(""); setMaxViews(""); setStatusFilter(""); setMonoFilter(""); setTopicFilter(""); setSelectedIds(new Set()); }}
             style={{ height: 32, padding: "0 12px", borderRadius: 8, fontSize: 12, cursor: "pointer",
-              border: `1px solid ${C.border}`, background: C.bgCard, color: C.red }}>
+              border: `1px solid ${C.border}`, background: C.bgCard, color: C.red, flexShrink: 0 }}>
             Xóa bộ lọc
           </button>
         )}
 
         {/* Kết quả */}
-        <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 4 }}>
+        <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 4, flexShrink: 0 }}>
           {channels.length} / {totalChannels} kênh
         </span>
 
@@ -1075,7 +1145,7 @@ export default function CmsDetailPage() {
           <button
             onClick={() => setShowAddChannel(true)}
             style={{
-              marginLeft: 4, height: 32, padding: "0 12px", borderRadius: 8, fontSize: 12,
+              marginLeft: "auto", height: 32, padding: "0 12px", borderRadius: 8, fontSize: 12,
               cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
               border: `1px solid ${C.green}`, background: `${C.green}15`, color: C.green,
               fontWeight: 600,
@@ -1085,7 +1155,8 @@ export default function CmsDetailPage() {
             Thêm kênh
           </button>
         )}
-      </div>
+
+      </div>{/* end filter bar */}
 
       {(
         <>
@@ -1095,7 +1166,12 @@ export default function CmsDetailPage() {
                 Import CSV
               </Button>
             )}
-            {can("channel:delete") && (
+            {can("channel:delete") && selectedIds.size > 0 && selectedIds.size < channels.length && (
+              <Button variant="danger" size="sm" icon={<Trash2 size={13} />} onClick={() => setShowDeleteSelectedConfirm(true)}>
+                Xoá {selectedIds.size} kênh đã chọn
+              </Button>
+            )}
+            {can("channel:delete") && selectedIds.size === channels.length && channels.length > 0 && (
               <Button variant="danger" size="sm" icon={<Trash2 size={13} />} onClick={() => setShowClearConfirm(true)}>
                 Xoá tất cả kênh
               </Button>
@@ -1155,7 +1231,7 @@ export default function CmsDetailPage() {
                         style={{ accentColor: C.blue, cursor: "pointer" }}
                       />
                     </th>
-                    {(["Channel", "Topic", "Partner", "Status", "Monetization", "Link Date", "Copyright", "Video", "Total Views", "Subscribers", "30 Days Revenue", "Last Day Revenue", ""] as const).map((h) => (
+                    {(["Channel", "Topic", "Partner", "Status", "Monetization", "Link Date", "Copyright", "Video", "Total Views", "Subscribers", "28 Day Revenue", "Last Day Revenue", ""] as const).map((h) => (
                       <th key={h} style={{
                         padding: h === "Copyright" ? "10px 8px" : "10px 16px",
                         width: h === "Copyright" ? 70 : undefined,
@@ -1199,8 +1275,18 @@ export default function CmsDetailPage() {
                         />
                       </td>
                       <td style={{ padding: "10px 16px" }}>
-                        <div style={{ fontWeight: 500, color: C.text }}>{ch.name}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ fontWeight: 500, color: C.text }}>{ch.name}</div>
+                          {ch.is_unlinked && (
+                            <span title={ch.unlinked_at ? `Unlinked at ${new Date(ch.unlinked_at).toLocaleString("vi-VN")}` : "Unlinked"}>
+                              <Pill color="amber">Unlink</Pill>
+                            </span>
+                          )}
+                        </div>
                         {ch.yt_id && <div style={{ fontSize: 11, color: C.textMuted }}>{ch.yt_id}</div>}
+                        {ch.is_unlinked && ch.unlink_reason && (
+                          <div style={{ fontSize: 11, color: C.textMuted }}>{ch.unlink_reason}</div>
+                        )}
                       </td>
                       <td style={{ padding: "10px 16px" }}>
                         {ch.topic_name ? (

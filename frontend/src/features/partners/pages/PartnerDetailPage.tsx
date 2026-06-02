@@ -1,9 +1,9 @@
-import { useState, useRef } from "react";
+﻿import { useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ChevronLeft, Building2, Youtube, FileText, Users as UsersIcon,
   Percent, Globe, Mail, Phone, User, Plus, ChevronRight, ArrowRightLeft,
-  Upload, Trash2, Download, Calendar, Pencil, Eye, FileDown, Tag, BarChart2,
+  Upload, Trash2, Download, Calendar, Pencil, Eye, FileDown, Tag, BarChart2, UserPlus, UserX,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -14,7 +14,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { C } from "@/styles/theme";
 import { Button, Card, Pill, StatusDot, EmptyState, Modal, Field, Input, Select } from "@/components/ui";
-import { usePartnerProfile, usePartnerList, usePartnerRevenue } from "@/api/partners.api";
+import { usePartnerProfile, usePartnerList, usePartnerRevenue, useUnassignedPartnerAccounts, useAssignPartnerAccount } from "@/api/partners.api";
 import { usePartnerContracts, useUploadContract, useUpdateContract, useDeleteContract } from "@/api/contracts.api";
 import type { PartnerContract } from "@/api/contracts.api";
 import { FileViewerModal } from "@/components/ui";
@@ -36,7 +36,7 @@ const TIER_COLOR: Record<PartnerTier, string> = { Premium: C.purple, Standard: C
 function PartnerHistoryModal({
   open, onClose, partnerId, partnerName, isParent,
 }: { open: boolean; onClose: () => void; partnerId: string; partnerName: string; isParent?: boolean }) {
-  const [period, setPeriod] = useState<PeriodKey>("30");
+  const [period, setPeriod] = useState<PeriodKey>("28");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState(todayInputDate());
   const activeParams = fromDate && toDate
@@ -130,7 +130,7 @@ function PartnerHistoryModal({
               <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9, fill: C.textMuted }} tickLine={false}
                 tickFormatter={(v: number) => `${(v / 1_000_000).toFixed(1)}M`} />
               <Tooltip
-                contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
                 formatter={(value: number, name: string) =>
                   name === "Revenue ($)" ? [`$${value.toFixed(3)}`, name] : [fmt(value), name]
                 }
@@ -482,7 +482,7 @@ export default function PartnerDetailPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
               <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{partner.name}</h1>
-              <Pill color={partner.status === "Active" ? "green" : partner.status === "Suspended" ? "yellow" : "red"}>
+              <Pill color={partner.status === "Active" ? "green" : partner.status === "Suspended" ? "amber" : "red"}>
                 {partner.status}
               </Pill>
               {/* Badge phân cấp */}
@@ -603,7 +603,7 @@ export default function PartnerDetailPage() {
                           </span>
                         </td>
                         <td style={{ padding: "10px 16px" }}>
-                          <Pill color={child.status === "Active" ? "green" : child.status === "Suspended" ? "yellow" : "red"}>
+                          <Pill color={child.status === "Active" ? "green" : child.status === "Suspended" ? "amber" : "red"}>
                             {child.status}
                           </Pill>
                         </td>
@@ -769,6 +769,11 @@ export default function PartnerDetailPage() {
           {childTab === "contracts" && <ContractsTable partnerId={partner.id} />}
         </>
       )}
+
+      {/* Accounts section */}
+      <div style={{ marginTop: 20 }}>
+        <UsersTable users={users} partnerId={partner.id} />
+      </div>
 
       {/* Notes */}
       {partner.notes && (
@@ -1216,32 +1221,151 @@ function ContractsTable({ partnerId }: { partnerId: string }) {
   );
 }
 
-function UsersTable({ users }: { users: UserItem[] }) {
-  if (!users.length)
-    return <EmptyState icon={<UsersIcon size={32} />} title="Chưa có tài khoản" description="Đối tác này chưa có tài khoản nào" />;
+// ── Assign Account Modal ──────────────────────────────────────
+function AssignAccountModal({ partnerId, onClose }: { partnerId: string; onClose: () => void }) {
+  const toast = useToast();
+  const { data: unassigned = [], isLoading } = useUnassignedPartnerAccounts();
+  const assignMut = useAssignPartnerAccount();
+  const [search, setSearch] = useState("");
+
+  const query = search.trim().toLowerCase();
+  const filtered = unassigned.filter((u) =>
+    !query ||
+    (u.full_name ?? "").toLowerCase().includes(query) ||
+    u.email.toLowerCase().includes(query)
+  );
+
+  const handleAssign = async (userId: string, email: string) => {
+    try {
+      await assignMut.mutateAsync({ userId, partner_id: partnerId });
+      toast.success("Đã gán tài khoản", email);
+    } catch (err) {
+      toast.error("Lỗi", err instanceof Error ? err.message : "Thử lại");
+    }
+  };
+
   return (
-    <Card padding={0} style={{ overflow: "hidden" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-        <thead>
-          <tr style={{ background: C.bgHover, borderBottom: `1px solid ${C.border}` }}>
-            {["Họ tên","Email","Trạng thái","Đăng nhập lần cuối"].map((h) => (
-              <th key={h} style={{ padding: "9px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.textMuted }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((u) => (
-            <tr key={u.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-              <td style={{ padding: "10px 16px", fontWeight: 500, color: C.text }}>{u.full_name}</td>
-              <td style={{ padding: "10px 16px", color: C.textSub }}>{u.email}</td>
-              <td style={{ padding: "10px 16px" }}>
-                <Pill color={u.status === "Active" ? "green" : u.status === "PendingApproval" ? "yellow" : "red"}>{u.status}</Pill>
-              </td>
-              <td style={{ padding: "10px 16px", color: C.textMuted }}>{u.last_login ? fmtDate(u.last_login) : "Chưa đăng nhập"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Card>
+    <Modal open onClose={onClose} title="Gán tài khoản đại diện" width={520}>
+      <div style={{ marginBottom: 12 }}>
+        <Input
+          placeholder="Tìm theo tên hoặc email..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+      {isLoading ? (
+        <div style={{ padding: "24px 0", textAlign: "center", color: C.textSub }}>Đang tải...</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ padding: "24px 0", textAlign: "center", color: C.textMuted, fontSize: 13 }}>
+          {search ? "Không tìm thấy tài khoản phù hợp" : "Không có tài khoản nào chưa được gán"}
+        </div>
+      ) : (
+        <div style={{ maxHeight: 360, overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: C.bgHover, borderBottom: `1px solid ${C.border}` }}>
+                {["Họ tên", "Email", "Trạng thái", ""].map((h) => (
+                  <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.textMuted }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((u) => (
+                <tr key={u.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: "9px 12px", fontWeight: 500, color: C.text }}>
+                    {u.full_name?.trim() || u.email}
+                  </td>
+                  <td style={{ padding: "9px 12px", color: C.textSub }}>{u.email}</td>
+                  <td style={{ padding: "9px 12px" }}>
+                    <Pill color={u.status === "Active" ? "green" : "amber"}>{u.status}</Pill>
+                  </td>
+                  <td style={{ padding: "9px 12px", textAlign: "right" }}>
+                    <Button
+                      size="sm" variant="primary"
+                      loading={assignMut.isPending}
+                      onClick={() => handleAssign(u.id, u.email)}
+                    >
+                      Gán
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ── Users Table ───────────────────────────────────────────────
+function UsersTable({ users, partnerId }: { users: UserItem[]; partnerId: string }) {
+  const toast = useToast();
+  const assignMut = useAssignPartnerAccount();
+  const [showAssign, setShowAssign] = useState(false);
+
+  const handleUnlink = async (userId: string, name: string) => {
+    if (!confirm(`Hủy liên kết tài khoản "${name}" khỏi đối tác này?`)) return;
+    try {
+      await assignMut.mutateAsync({ userId, partner_id: null });
+      toast.success("Đã hủy liên kết", name);
+    } catch (err) {
+      toast.error("Lỗi", err instanceof Error ? err.message : "Thử lại");
+    }
+  };
+
+  return (
+    <>
+      {showAssign && <AssignAccountModal partnerId={partnerId} onClose={() => setShowAssign(false)} />}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
+          Tài khoản đại diện ({users.length})
+        </div>
+        <Button size="sm" variant="secondary" icon={<UserPlus size={13} />} onClick={() => setShowAssign(true)}>
+          Gán tài khoản
+        </Button>
+      </div>
+      {users.length === 0 ? (
+        <EmptyState icon={<UsersIcon size={28} />} title="Chưa có tài khoản" description="Bấm 'Gán tài khoản' để liên kết tài khoản đại diện" />
+      ) : (
+        <Card padding={0} style={{ overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: C.bgHover, borderBottom: `1px solid ${C.border}` }}>
+                {["Họ tên", "Email", "Trạng thái", "Đăng nhập lần cuối", ""].map((h) => (
+                  <th key={h} style={{ padding: "9px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: C.textMuted }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: "10px 16px", fontWeight: 500, color: C.text }}>{u.full_name}</td>
+                  <td style={{ padding: "10px 16px", color: C.textSub }}>{u.email}</td>
+                  <td style={{ padding: "10px 16px" }}>
+                    <Pill color={u.status === "Active" ? "green" : u.status === "PendingApproval" ? "amber" : "red"}>{u.status}</Pill>
+                  </td>
+                  <td style={{ padding: "10px 16px", color: C.textMuted }}>{u.last_login ? fmtDate(u.last_login) : "Chưa đăng nhập"}</td>
+                  <td style={{ padding: "10px 12px", textAlign: "right" }}>
+                    <button
+                      onClick={() => handleUnlink(u.id, u.full_name || u.email)}
+                      title="Hủy liên kết tài khoản"
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 4,
+                        padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600,
+                        border: `1px solid ${C.border}`, background: "transparent",
+                        color: C.red, cursor: "pointer",
+                      }}
+                    >
+                      <UserX size={11} /> Hủy liên kết
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </>
   );
 }

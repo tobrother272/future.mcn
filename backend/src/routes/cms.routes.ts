@@ -68,8 +68,39 @@ router.get("/:id/stats", async (req, res, next) => {
 router.get("/:id/revenue", async (req, res, next) => {
   try {
     const { from, to } = req.query as { from?: string; to?: string };
-    const days = Math.min(365, Number(req.query.days) || 30);
-    res.json(await CmsService.getRevenue(req.params.id, { days, from, to }));
+    const isLifetime = req.query.period === "lifetime";
+    const days = isLifetime ? 0 : Math.min(365, Number(req.query.days) || 30);
+    const rows = await CmsService.getRevenue(req.params.id, { days, from, to, isLifetime });
+
+    // Fetch period_summary from channel_analytics_period for 90/365/lifetime
+    const periodKey = isLifetime ? "lifetime"
+      : (!from && !to && (days === 90 || days === 365)) ? String(days)
+      : null;
+    let period_summary: { revenue: number; views: number; channel_count: number; captured_date: string } | null = null;
+    if (periodKey) {
+      const { queryOne } = await import("../db/helpers.js");
+      const ps = await queryOne<{ revenue: string; views: string; channel_count: string; captured_date: string }>(
+        `SELECT
+           COALESCE(SUM(cap.revenue),0)::text      AS revenue,
+           COALESCE(SUM(cap.views),0)::text        AS views,
+           COUNT(cap.channel_id)::text             AS channel_count,
+           MAX(cap.captured_date)::text            AS captured_date
+         FROM channel_analytics_period cap
+         JOIN channel c ON c.id = cap.channel_id
+         WHERE c.cms_id = $1 AND cap.period = $2`,
+        [req.params.id, periodKey]
+      );
+      if (ps && Number(ps.revenue) > 0) {
+        period_summary = {
+          revenue:       Number(ps.revenue),
+          views:         Number(ps.views),
+          channel_count: Number(ps.channel_count),
+          captured_date: ps.captured_date,
+        };
+      }
+    }
+
+    res.json({ items: rows, period_summary });
   } catch(e) { next(e); }
 });
 
@@ -112,6 +143,10 @@ router.get("/:id/channels", async (req, res, next) => {
 
 router.get("/:id/topics", async (req, res, next) => {
   try { res.json(await CmsService.getTopics(req.params.id)); } catch(e) { next(e); }
+});
+
+router.get("/:id/revenue-by-topic", async (req, res, next) => {
+  try { res.json(await CmsService.getRevenueByTopic(req.params.id!)); } catch(e) { next(e); }
 });
 
 router.post("/", validate(createSchema), async (req, res, next) => {

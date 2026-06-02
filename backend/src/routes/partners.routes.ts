@@ -109,7 +109,6 @@ router.get("/accounts/unassigned", async (req, res, next) => {
       `SELECT id, email, full_name, status, created_at
        FROM account
        WHERE account_type='partner' AND (partner_id IS NULL OR partner_id='')
-         AND status IN ('Active','PendingApproval')
        ORDER BY created_at DESC`
     );
     res.json(rows);
@@ -249,10 +248,14 @@ router.get("/:id/revenue", async (req, res, next) => {
     const { from, to } = req.query as { from?: string; to?: string };
     const days = Math.min(365, Math.max(1, Number(req.query["days"]) || 30));
     const { queryMany } = await import("../db/helpers.js");
-    const dateFilter = from && to
+    const useRange = Boolean(from && to);
+    const filterDays = days + 2;
+    const dateFilter = useRange
       ? `AND ca.date >= $2::date AND ca.date <= $3::date`
-      : `AND ca.date >= CURRENT_DATE - ($2::int)`;
-    const params = from && to ? [req.params.id, from, to] : [req.params.id, days];
+      : `AND ca.date >= CURRENT_DATE - ($2::int) AND ca.date <= CURRENT_DATE - 2`;
+    const params = useRange
+      ? [req.params.id, from, to]
+      : [req.params.id, filterDays];
     const rows = await queryMany<{
       snapshot_date: string; revenue: number; views: number;
       engaged_views: number; watch_time_hours: number;
@@ -295,12 +298,13 @@ router.get("/:id/revenue-grouped", async (req, res, next) => {
     const { queryMany } = await import("../db/helpers.js");
 
     const useRange = Boolean(from && to);
+    const filterDays = days + 2;
     const dateFilter = useRange
       ? `AND ca.date >= $2::date AND ca.date <= $3::date`
-      : `AND ca.date >= CURRENT_DATE - ($2::int)`;
+      : `AND ca.date >= CURRENT_DATE - ($2::int) AND ca.date <= CURRENT_DATE - 2`;
     const params = useRange
       ? [req.params.id, from, to]
-      : [req.params.id, days];
+      : [req.params.id, filterDays];
 
     if (by === "channel") {
       const rows = await queryMany(
@@ -376,7 +380,6 @@ router.get("/:id/top-channels", async (req, res, next) => {
               c.status,
               c.monetization,
               c.subscribers,
-              c.monthly_revenue,
               c.cms_id,
               cm.name AS cms_name,
               c.partner_id,
@@ -393,7 +396,7 @@ router.get("/:id/top-channels", async (req, res, next) => {
          SELECT id FROM partner WHERE id = $1 OR parent_id = $1
        )
        GROUP BY c.id, cm.name, p.name
-       ORDER BY revenue DESC, c.monthly_revenue DESC NULLS LAST
+       ORDER BY revenue DESC
        LIMIT $${limitIdx}`,
       baseParams
     );

@@ -150,10 +150,10 @@ $env:SSH_USER = $envMap['SSH_USER']
 $env:SSH_PASS = if ($envMap['SSH_PASS'])     { $envMap['SSH_PASS'] }     else { "" }
 $env:SSH_KEY  = if ($envMap['SSH_KEY_FILE']) { $envMap['SSH_KEY_FILE'] } else { "" }
 
-& python .deploy\ssh_exec.py --upload $tarball "/tmp/release-$releaseId.tar.gz"
+& python3 .deploy\ssh_exec.py --upload $tarball "/tmp/release-$releaseId.tar.gz"
 if ($LASTEXITCODE -ne 0) { Die "upload tarball failed" }
 
-& python .deploy\ssh_exec.py --upload "scripts\remote_release.sh" "/tmp/remote_release.sh"
+& python3 .deploy\ssh_exec.py --upload "scripts\remote_release.sh" "/tmp/remote_release.sh"
 if ($LASTEXITCODE -ne 0) { Die "upload remote_release.sh failed" }
 Write-Ok "artifacts uploaded"
 
@@ -164,7 +164,7 @@ if ($SkipBackup) { $skipBkArg = "--skip-backup" }
 
 # Pass release id + flags through environment to remote script.
 $remoteCmd = "RELEASE_ID='$releaseId' DEPLOY_DIR='$($envMap['REMOTE_DEPLOY_DIR'])' bash /tmp/remote_release.sh $skipBkArg 2>&1"
-& python .deploy\ssh_exec.py $remoteCmd --timeout 1800
+& python3 .deploy\ssh_exec.py $remoteCmd --timeout 1800
 $remoteExit = $LASTEXITCODE
 if ($remoteExit -ne 0) {
     Die "remote release failed (exit=$remoteExit). Đã rollback (nếu remote script tới được bước rollback)."

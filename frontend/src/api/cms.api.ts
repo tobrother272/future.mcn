@@ -29,12 +29,20 @@ export function useCmsStats(id: string) {
   });
 }
 
-export function useCmsRevenue(id: string, opts: { days?: number; from?: string; to?: string } = {}) {
-  const { days = 30, from, to } = opts;
-  const searchParams = from && to ? { from, to } : { days };
+export type CmsRevenueResponse = {
+  items: RevenueDaily[];
+  period_summary: { revenue: number; views: number; channel_count: number; captured_date: string } | null;
+};
+
+export function useCmsRevenue(id: string, opts: { days?: number; from?: string; to?: string; period?: string } = {}) {
+  const { days = 28, from, to, period } = opts;
+  const isLifetime = period === "lifetime";
+  const searchParams = isLifetime
+    ? { period: "lifetime" }
+    : from && to ? { from, to } : { days };
   return useQuery({
-    queryKey: ["cms", id, "revenue", from && to ? `${from}~${to}` : days],
-    queryFn: () => apiClient.get(`cms/${id}/revenue`, { searchParams }).json<RevenueDaily[]>(),
+    queryKey: ["cms", id, "revenue", isLifetime ? "lifetime" : from && to ? `${from}~${to}` : days],
+    queryFn: () => apiClient.get(`cms/${id}/revenue`, { searchParams }).json<CmsRevenueResponse>(),
     enabled: !!id,
   });
 }
@@ -171,6 +179,23 @@ export function useCmsChannels(id: string, params?: PaginationParams & {
       apiClient
         .get(`cms/${id}/channels`, { searchParams: params as Record<string, string> })
         .json<PaginatedResponse<import("@/types/channel").Channel>>(),
+    enabled: !!id,
+  });
+}
+
+export interface RevenueByTopicRow {
+  topic_id:          string | null;
+  topic:             string;
+  channel_count:     number;
+  monetized_count:   number;
+  total_revenue:     number;
+  total_last_revenue: number;
+}
+
+export function useRevenueByTopic(id: string) {
+  return useQuery({
+    queryKey: ["cms", id, "revenue-by-topic"],
+    queryFn: () => apiClient.get(`cms/${id}/revenue-by-topic`).json<RevenueByTopicRow[]>(),
     enabled: !!id,
   });
 }

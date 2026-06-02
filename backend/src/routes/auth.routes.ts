@@ -61,7 +61,9 @@ router.patch("/me", requireAuth, async (req, res, next) => {
   try {
     const { full_name, phone } = req.body as { full_name?: string; phone?: string };
     const ut = req.user!.userType as "partner" | "internal";
-    res.json(await AuthService.updateMe(req.user!.id, ut, { full_name, phone }));
+    await AuthService.updateMe(req.user!.id, ut, { full_name, phone });
+    const user = await AuthService.getMe(req.user!.id, req.user!.userType);
+    res.json(user);
   } catch (e) { next(e); }
 });
 

@@ -11,8 +11,8 @@ export function useRevenue(scope: string, scopeId: string, days = 30) {
 }
 
 export function useRevenueBreakdown(
-  by: "cms" | "channel" | "partner" = "cms",
-  periodOrOpts: number | { period?: number; from?: string; to?: string } = 30
+  by: "cms" | "channel" | "partner" | "topic" = "cms",
+  periodOrOpts: number | { period?: number | "lifetime"; from?: string; to?: string } = 30
 ) {
   const opts = typeof periodOrOpts === "number" ? { period: periodOrOpts } : periodOrOpts;
   const { period = 30, from, to } = opts;
@@ -24,7 +24,7 @@ export function useRevenueBreakdown(
 }
 
 export function useRevenueSystemDaily(
-  periodOrOpts: number | { period?: number; from?: string; to?: string } = 30
+  periodOrOpts: number | { period?: number | "lifetime"; from?: string; to?: string } = 30
 ) {
   const opts = typeof periodOrOpts === "number" ? { period: periodOrOpts } : periodOrOpts;
   const { period = 30, from, to } = opts;
@@ -34,6 +34,25 @@ export function useRevenueSystemDaily(
     queryFn: () =>
       apiClient.get("revenue/system-daily", { searchParams })
         .json<Array<{ snapshot_date: string; revenue: number; views: number; subscribers: number }>>(),
+  });
+}
+
+export function useRevenueEntityDaily(
+  by: "cms" | "partner" | "topic" | null,
+  id: string | null,
+  periodOrOpts: number | { period?: number | "lifetime"; from?: string; to?: string } = 30
+) {
+  const opts = typeof periodOrOpts === "number" ? { period: periodOrOpts } : periodOrOpts;
+  const { period = 30, from, to } = opts;
+  const searchParams = from && to
+    ? { by: by ?? "cms", id: id ?? "", from, to }
+    : { by: by ?? "cms", id: id ?? "", period };
+  return useQuery({
+    queryKey: ["revenue", "entity-daily", by, id, from && to ? `${from}~${to}` : period],
+    queryFn: () =>
+      apiClient.get("revenue/entity-daily", { searchParams })
+        .json<Array<{ snapshot_date: string; revenue: number; views: number; subscribers: number }>>(),
+    enabled: !!(by && id),
   });
 }
 

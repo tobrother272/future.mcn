@@ -13,9 +13,10 @@ export function fmtCurrency(amount: number | string | null | undefined, currency
   if (amount == null || amount === "") return "—";
   const v = Number(amount);
   if (isNaN(v)) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency, notation: "compact", maximumFractionDigits: 1,
-  }).format(v);
+  if (Math.abs(v) >= 1_000_000) {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency, notation: "compact", maximumFractionDigits: 2 }).format(v);
+  }
+  return new Intl.NumberFormat("en-US", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 }
 
 export function fmtDate(date: string | Date | null | undefined): string {

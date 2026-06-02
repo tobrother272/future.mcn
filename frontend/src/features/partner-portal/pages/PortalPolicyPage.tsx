@@ -6,12 +6,32 @@ import type { Policy } from "@/api/policies.api";
 import { fmtDate } from "@/lib/format";
 
 // ── Image path helper ─────────────────────────────────────────
-function imgSrc(p: string) {
+const UPLOADS_BASE = (import.meta.env.VITE_UPLOADS_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
+
+function imgSrc(p: string, base = UPLOADS_BASE) {
+  if (!p) return "";
   const n = p.replace(/\\/g, "/");
-  if (n.includes("/uploads/")) return n.slice(n.indexOf("/uploads/"));
-  if (n.startsWith("uploads/")) return `/${n}`;
-  if (n.startsWith("/")) return n;
-  return `/${n}`;
+  let rel: string;
+  if (n.startsWith("http://") || n.startsWith("https://")) return n;
+  if (n.includes("/uploads/")) rel = n.slice(n.indexOf("/uploads/"));
+  else if (n.startsWith("uploads/")) rel = `/${n}`;
+  else if (n.startsWith("/")) rel = n;
+  else rel = `/${n}`;
+  return `${base}${rel}`;
+}
+
+// Fallback: nếu UPLOADS_BASE đang được dùng thì thử relative (hoặc ngược lại)
+function imgFallback(src: string): string {
+  if (!src) return "";
+  if (UPLOADS_BASE && src.startsWith(UPLOADS_BASE)) {
+    // Đang dùng staging → thử relative (local)
+    return src.slice(UPLOADS_BASE.length);
+  }
+  if (UPLOADS_BASE) {
+    // Đang dùng relative → thử staging
+    return `${UPLOADS_BASE}${src.startsWith("/") ? src : `/${src}`}`;
+  }
+  return "";
 }
 
 // ── Lightbox ──────────────────────────────────────────────────
@@ -46,6 +66,7 @@ function Lightbox({ images, startIndex, onClose }: { images: string[]; startInde
         </button>
       )}
       <img src={imgSrc(images[idx] ?? "")} alt="" onClick={(e) => e.stopPropagation()}
+        onError={(e) => { const el = e.target as HTMLImageElement; const fb = imgFallback(el.src); if (fb && el.src !== fb) el.src = fb; }}
         style={{ maxWidth: "92vw", maxHeight: "90vh", objectFit: "contain", borderRadius: 8, boxShadow: "0 8px 40px rgba(0,0,0,.6)" }} />
       {images.length > 1 && (
         <button onClick={(e) => { e.stopPropagation(); next(); }} style={{ position: "absolute", right: 16, background: "rgba(255,255,255,.15)", border: "none", color: "#fff", borderRadius: "50%", width: 44, height: 44, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -133,10 +154,15 @@ function PolicyCard({ policy }: { policy: Policy }) {
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
                 {policy.images.map((img, i) => (
-                  <div key={img} style={{ position: "relative", cursor: "zoom-in" }} onClick={() => setLightbox(i)}>
-                    <img src={imgSrc(img)} alt=""
+                  <div key={img.path} style={{ position: "relative", cursor: "zoom-in" }} onClick={() => setLightbox(i)}>
+                    <img src={imgSrc(img.path)} alt={img.caption || ""}
                       style={{ width: 140, height: 100, objectFit: "cover", borderRadius: 10, border: `1px solid ${C.border}`, display: "block" }}
-                      onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
+                      onError={(e) => {
+                        const el = e.target as HTMLImageElement;
+                        const fb = imgFallback(el.src);
+                        if (fb && el.src !== fb) { el.src = fb; }
+                        else { el.style.display = "none"; }
+                      }} />
                     <div style={{ position: "absolute", inset: 0, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", opacity: 0, transition: "all .15s", background: "transparent" }}
                       onMouseEnter={(e) => { const el = e.currentTarget as HTMLDivElement; el.style.background = "rgba(0,0,0,.4)"; el.style.opacity = "1"; }}
                       onMouseLeave={(e) => { const el = e.currentTarget as HTMLDivElement; el.style.background = "transparent"; el.style.opacity = "0"; }}>
@@ -159,7 +185,7 @@ function PolicyCard({ policy }: { policy: Policy }) {
         </div>
       )}
 
-      {lightbox !== null && <Lightbox images={policy.images} startIndex={lightbox} onClose={() => setLightbox(null)} />}
+      {lightbox !== null && <Lightbox images={policy.images.map((i) => i.path)} startIndex={lightbox} onClose={() => setLightbox(null)} />}
     </div>
   );
 }

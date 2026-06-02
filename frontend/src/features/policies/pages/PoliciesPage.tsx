@@ -9,10 +9,21 @@ import { Button, Pill } from "@/components/ui";
 import {
   usePolicyList, useCreatePolicy, useUpdatePolicy, useDeletePolicy,
   useUploadPolicyImages, useRemovePolicyImage, useSetPolicyImages,
+  usePolicyCategories, useCreatePolicyCategory, useDeletePolicyCategory,
 } from "@/api/policies.api";
 import type { Policy, PolicyImage } from "@/api/policies.api";
 import { useTopics } from "@/api/cms.api";
 import { useToast } from "@/stores/notificationStore";
+
+// ── Category color helper ──────────────────────────────────────
+const CATEGORY_COLORS: Record<string, string> = {
+  "Youtube Policy": C.blue,
+  "Net Update":     C.amber,
+  "Net Notify":     C.purple,
+};
+function categoryColor(cat: string): string {
+  return CATEGORY_COLORS[cat] ?? C.teal;
+}
 
 // ── HTML → Markdown links converter (used on paste) ──────────
 function htmlToMarkdownLinks(html: string): string {
@@ -264,7 +275,13 @@ function PolicyModal({ policy, onClose }: { policy?: Policy; onClose: () => void
   const toast = useToast();
   const isEdit = !!policy;
 
+  const { data: categories = [] } = usePolicyCategories();
+  const createCategoryMut = useCreatePolicyCategory();
+
   const [name, setName] = useState(policy?.name ?? "");
+  const [category, setCategory] = useState(policy?.category ?? "Youtube Policy");
+  const [newCatName, setNewCatName] = useState("");
+  const [showNewCat, setShowNewCat] = useState(false);
   const [content, setContent] = useState(policy?.content ?? "");
   const [application, setApplication] = useState(policy?.application ?? "");
   const [topicIds, setTopicIds] = useState<string[]>(policy?.topic_ids ?? []);
@@ -306,7 +323,7 @@ function PolicyModal({ policy, onClose }: { policy?: Policy; onClose: () => void
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) { toast.warning("Thiếu tên", "Nhập tên chính sách"); return; }
-    const data = { name: name.trim(), content: content.trim(), application: application.trim(), topic_ids: topicIds };
+    const data = { name: name.trim(), category, content: content.trim(), application: application.trim(), topic_ids: topicIds };
     try {
       if (isEdit) {
         const updated = await updateMut.mutateAsync(data);
@@ -343,6 +360,70 @@ function PolicyModal({ policy, onClose }: { policy?: Policy; onClose: () => void
             <label style={lbl}>Tên chính sách *</label>
             <input value={name} onChange={(e) => setName(e.target.value)} required
               placeholder="VD: Chính sách vi phạm bản quyền..." style={inp} />
+          </div>
+
+          {/* Category */}
+          <div>
+            <label style={lbl}>Phân loại</label>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {categories.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setCategory(cat)}
+                  style={{
+                    padding: "5px 14px", borderRadius: 99, fontSize: 12, cursor: "pointer",
+                    border: `1px solid ${category === cat ? categoryColor(cat) : C.border}`,
+                    background: category === cat ? `${categoryColor(cat)}20` : C.bgHover,
+                    color: category === cat ? categoryColor(cat) : C.textSub,
+                    fontWeight: category === cat ? 700 : 400, transition: "all .12s",
+                  }}
+                >
+                  {cat}
+                </button>
+              ))}
+              {/* Add new category inline */}
+              {showNewCat ? (
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    autoFocus
+                    value={newCatName}
+                    onChange={(e) => setNewCatName(e.target.value)}
+                    onKeyDown={async (e) => {
+                      if (e.key === "Enter" && newCatName.trim()) {
+                        await createCategoryMut.mutateAsync(newCatName.trim());
+                        setCategory(newCatName.trim());
+                        setNewCatName(""); setShowNewCat(false);
+                      }
+                      if (e.key === "Escape") { setNewCatName(""); setShowNewCat(false); }
+                    }}
+                    placeholder="Tên phân loại mới..."
+                    style={{ ...inp, width: 180, padding: "5px 10px" }}
+                  />
+                  <button type="button"
+                    onClick={async () => {
+                      if (!newCatName.trim()) return;
+                      await createCategoryMut.mutateAsync(newCatName.trim());
+                      setCategory(newCatName.trim());
+                      setNewCatName(""); setShowNewCat(false);
+                    }}
+                    style={{ background: C.green, color: "#fff", border: "none", borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontSize: 12 }}>
+                    Tạo
+                  </button>
+                  <button type="button" onClick={() => { setNewCatName(""); setShowNewCat(false); }}
+                    style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 8px", cursor: "pointer", color: C.textMuted, display: "flex" }}>
+                    <X size={12} />
+                  </button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setShowNewCat(true)}
+                  style={{ padding: "5px 12px", borderRadius: 99, fontSize: 12, cursor: "pointer",
+                    border: `1px dashed ${C.border}`, background: "transparent", color: C.textMuted,
+                    display: "flex", alignItems: "center", gap: 4 }}>
+                  <Plus size={11} /> Thêm phân loại
+                </button>
+              )}
+            </div>
           </div>
           <div>
             <label style={lbl}>
@@ -507,18 +588,27 @@ function PolicyCard({ policy, onEdit, onDelete }: { policy: Policy; onEdit: () =
         <div style={{ width: 36, height: 36, borderRadius: 8, background: `${C.blue}20`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
           <ShieldCheck size={16} color={C.blue} />
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{policy.name}</span>
-            {policy.images.length > 0 && (
-              <Pill color="purple" style={{ fontSize: 10 }}><Image size={9} style={{ marginRight: 3 }} />{policy.images.length} ảnh</Pill>
-            )}
-            {policyTopics.map((t) => (
-              <Pill key={t.id} color="teal" style={{ fontSize: 10 }}>
-                <Tag size={9} style={{ marginRight: 3 }} />{t.name}
-              </Pill>
-            ))}
-          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{policy.name}</span>
+              {/* Category badge */}
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99,
+                background: `${categoryColor(policy.category ?? "Youtube Policy")}20`,
+                color: categoryColor(policy.category ?? "Youtube Policy"),
+                border: `1px solid ${categoryColor(policy.category ?? "Youtube Policy")}40`,
+              }}>
+                {policy.category ?? "Youtube Policy"}
+              </span>
+              {policy.images.length > 0 && (
+                <Pill color="purple" style={{ fontSize: 10 }}><Image size={9} style={{ marginRight: 3 }} />{policy.images.length} ảnh</Pill>
+              )}
+              {policyTopics.map((t) => (
+                <Pill key={t.id} color="teal" style={{ fontSize: 10 }}>
+                  <Tag size={9} style={{ marginRight: 3 }} />{t.name}
+                </Pill>
+              ))}
+            </div>
           {policy.application && (
             <div style={{ fontSize: 12, color: C.textSub, marginTop: 3 }}>
               <span style={{ fontWeight: 600 }}>Áp dụng:</span> {policy.application}
@@ -654,10 +744,17 @@ export default function PoliciesPage() {
   const [search, setSearch]           = useState("");
   const [debouncedSearch, setDebounced] = useState("");
   const [topicFilter, setTopicFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
   const [page, setPage]               = useState(0);
   const limit = 20;
   const toast = useToast();
   const { data: allTopics = [] }  = useTopics();
+  const { data: categories = [] } = usePolicyCategories();
+  const createCategoryMut = useCreatePolicyCategory();
+  const deleteCategoryMut = useDeletePolicyCategory();
+  const [showAddCat, setShowAddCat] = useState(false);
+  const [newCatInput, setNewCatInput] = useState("");
+  const DEFAULT_CATEGORIES = ["Youtube Policy", "Net Update", "Net Notify"];
 
   // Debounce 300ms — tự động search khi gõ
   useEffect(() => {
@@ -670,7 +767,8 @@ export default function PoliciesPage() {
 
   const { data, isLoading, refetch } = usePolicyList({
     search:   debouncedSearch || undefined,
-    topic_id: topicFilter || undefined,
+    topic_id: topicFilter     || undefined,
+    category: categoryFilter  || undefined,
     limit,
     offset:   page * limit,
   });
@@ -742,12 +840,104 @@ export default function PoliciesPage() {
               </button>
             )}
           </div>
-          {(debouncedSearch || topicFilter) && (
-            <Button variant="ghost" size="sm" icon={<X size={12} />} onClick={() => { setSearch(""); setTopicFilter(""); setPage(0); }}>
+          {(debouncedSearch || topicFilter || categoryFilter) && (
+            <Button variant="ghost" size="sm" icon={<X size={12} />} onClick={() => { setSearch(""); setTopicFilter(""); setCategoryFilter(""); setPage(0); }}>
               Xóa lọc
             </Button>
           )}
           <span style={{ marginLeft: "auto", fontSize: 12, color: C.textMuted, display: "flex", alignItems: "center" }}>{total} chính sách</span>
+        </div>
+
+        {/* Category filter chips */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: allTopics.length ? 8 : 0 }}>
+          <span style={{ fontSize: 11, color: C.textMuted }}>Phân loại:</span>
+          <button
+            onClick={() => { setCategoryFilter(""); setPage(0); }}
+            style={{ padding: "3px 12px", borderRadius: 99, fontSize: 11, cursor: "pointer",
+              border: `1px solid ${!categoryFilter ? C.blue : C.border}`,
+              background: !categoryFilter ? `${C.blue}15` : "transparent",
+              color: !categoryFilter ? C.blue : C.textMuted }}>
+            Tất cả
+          </button>
+          {categories.map((cat) => {
+            const color = categoryColor(cat);
+            const isDefault = DEFAULT_CATEGORIES.includes(cat);
+            return (
+              <div key={cat} style={{ display: "inline-flex", alignItems: "center", gap: 0, borderRadius: 99, overflow: "hidden",
+                border: `1px solid ${categoryFilter === cat ? color : C.border}` }}>
+                <button
+                  onClick={() => { setCategoryFilter(categoryFilter === cat ? "" : cat); setPage(0); }}
+                  style={{ padding: "3px 10px 3px 12px", background: categoryFilter === cat ? `${color}15` : "transparent",
+                    color: categoryFilter === cat ? color : C.textMuted, fontWeight: categoryFilter === cat ? 700 : 400,
+                    border: "none", cursor: "pointer", fontSize: 11 }}>
+                  {cat}
+                </button>
+                {!isDefault && (
+                  <button
+                    title={`Xóa phân loại "${cat}"`}
+                    onClick={() => {
+                      if (!confirm(`Xóa phân loại "${cat}"? Các chính sách sẽ được chuyển về "Youtube Policy".`)) return;
+                      if (categoryFilter === cat) setCategoryFilter("");
+                      deleteCategoryMut.mutate(cat, {
+                        onSuccess: () => toast.success("Đã xóa phân loại", cat),
+                        onError: () => toast.error("Lỗi", "Không thể xóa"),
+                      });
+                    }}
+                    style={{ background: "transparent", border: "none", borderLeft: `1px solid ${C.border}`,
+                      cursor: "pointer", padding: "3px 7px", display: "flex", alignItems: "center", color: C.textMuted,
+                      transition: "color .1s" }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = C.red; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = C.textMuted; }}>
+                    <X size={10} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {/* Thêm phân loại mới */}
+          {showAddCat ? (
+            <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+              <input
+                autoFocus
+                value={newCatInput}
+                onChange={(e) => setNewCatInput(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === "Enter" && newCatInput.trim()) {
+                    await createCategoryMut.mutateAsync(newCatInput.trim());
+                    toast.success("Đã thêm phân loại", newCatInput.trim());
+                    setNewCatInput(""); setShowAddCat(false);
+                  }
+                  if (e.key === "Escape") { setNewCatInput(""); setShowAddCat(false); }
+                }}
+                placeholder="Tên phân loại..."
+                style={{ height: 26, padding: "0 10px", borderRadius: 99, fontSize: 11,
+                  border: `1px solid ${C.blue}`, background: C.bgCard, color: C.text, outline: "none", width: 150 }}
+              />
+              <button
+                onClick={async () => {
+                  if (!newCatInput.trim()) return;
+                  await createCategoryMut.mutateAsync(newCatInput.trim());
+                  toast.success("Đã thêm phân loại", newCatInput.trim());
+                  setNewCatInput(""); setShowAddCat(false);
+                }}
+                style={{ height: 26, padding: "0 10px", borderRadius: 99, fontSize: 11,
+                  background: C.green, color: "#fff", border: "none", cursor: "pointer" }}>
+                Tạo
+              </button>
+              <button onClick={() => { setNewCatInput(""); setShowAddCat(false); }}
+                style={{ height: 26, padding: "0 8px", borderRadius: 99, fontSize: 11,
+                  background: "transparent", border: `1px solid ${C.border}`, color: C.textMuted, cursor: "pointer", display: "flex", alignItems: "center" }}>
+                <X size={11} />
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => setShowAddCat(true)}
+              style={{ padding: "3px 10px", borderRadius: 99, fontSize: 11, cursor: "pointer",
+                border: `1px dashed ${C.border}`, background: "transparent", color: C.textMuted,
+                display: "flex", alignItems: "center", gap: 4 }}>
+              <Plus size={10} /> Thêm phân loại
+            </button>
+          )}
         </div>
 
         {/* Topic filter chips */}
