@@ -236,6 +236,14 @@ router.delete("/:id", async (req, res, next) => {
   try { res.json(await ChannelService.delete(req.params.id)); } catch(e) { next(e); }
 });
 
+router.post("/bulk-delete", async (req, res, next) => {
+  try {
+    const { ids } = req.body as { ids: string[] };
+    if (!Array.isArray(ids) || ids.length === 0) { res.status(400).json({ error: "ids required" }); return; }
+    res.json(await ChannelService.bulkDelete(ids));
+  } catch(e) { next(e); }
+});
+
 // ── Analytics sub-resource ───────────────────────────────────
 router.get("/:id/analytics", async (req, res, next) => {
   try {
@@ -246,53 +254,110 @@ router.get("/:id/analytics", async (req, res, next) => {
     if (!ch) throw new NotFoundError(`Channel ${req.params.id} not found`);
 
     const { from, to } = req.query as { from?: string; to?: string };
-    const days  = Math.min(365, Number(req.query.days)  || 30);
-    const limit = Math.min(365, Number(req.query.limit) || days);
-    const dateFilter = from && to
-      ? "date >= $2::date AND date <= $3::date"
-      : "date >= CURRENT_DATE - ($2::int)";
-    const limitPlaceholder = from && to ? "$4" : "$3";
-    const params = from && to ? [ch.id, from, to, limit] : [ch.id, days, limit];
+    const isLifetime = req.query.period === "lifetime";
+    const days  = isLifetime ? 0 : Math.min(365, Number(req.query.days) || 30);
+    const limit = isLifetime ? 3000 : Math.min(365, Number(req.query.limit) || days);
 
-    const rows = await queryMany(
-      `SELECT date, views, engaged_views, watch_time_hours,
-              avg_view_duration, revenue
-       FROM channel_analytics
-       WHERE channel_id = $1
-         AND ${dateFilter}
-       ORDER BY date DESC
-       LIMIT ${limitPlaceholder}`,
-      params
-    );
+    // lifetime: return ALL daily rows, no date filter
+    // preset: mirror YouTube Studio (end = TODAY-2, start = TODAY-(days+1))
+    // custom from/to: use exact range
+    let rows: Record<string, unknown>[];
+    let summary: { total_views: string; total_engaged: string; total_watch_hours: string; total_revenue: string } | null;
 
-    const summaryFilter = from && to
-      ? "date >= $2::date AND date <= $3::date"
-      : "date >= CURRENT_DATE - ($2::int)";
-    const summaryParams = from && to ? [ch.id, from, to] : [ch.id, days];
-    const summary = await queryOne<{
-      total_views: string; total_engaged: string;
-      total_watch_hours: string; total_revenue: string;
-    }>(
-      `SELECT
-         COALESCE(SUM(views),0)::text            AS total_views,
-         COALESCE(SUM(engaged_views),0)::text    AS total_engaged,
-         COALESCE(SUM(watch_time_hours),0)::text AS total_watch_hours,
-         COALESCE(SUM(revenue),0)::text          AS total_revenue
-       FROM channel_analytics
-       WHERE channel_id = $1
-         AND ${summaryFilter}`,
-      summaryParams
-    );
+    if (isLifetime) {
+      rows = await queryMany(
+        `SELECT date, views, engaged_views, watch_time_hours, avg_view_duration, revenue
+         FROM channel_analytics
+         WHERE channel_id = $1
+         ORDER BY date DESC
+         LIMIT $2`,
+        [ch.id, limit]
+      );
+      summary = await queryOne(
+        `SELECT COALESCE(SUM(views),0)::text AS total_views,
+                COALESCE(SUM(engaged_views),0)::text AS total_engaged,
+                COALESCE(SUM(watch_time_hours),0)::text AS total_watch_hours,
+                COALESCE(SUM(revenue),0)::text AS total_revenue
+         FROM channel_analytics WHERE channel_id = $1`,
+        [ch.id]
+      );
+    } else {
+      const dateFilter = from && to
+        ? "date >= $2::date AND date <= $3::date"
+        : "date >= CURRENT_DATE - ($2::int) AND date <= CURRENT_DATE - 2";
+      // For preset: pass (days + 1) as the start offset so
+      //   CURRENT_DATE - (days+1) = the correct start date.
+      // Use days+2 as start offset so that regardless of whether the tool
+      // data lag is 2 or 3 days, the LIMIT clause naturally caps to exactly
+      // `days` rows — matching YouTube Studio's "last N days of available data".
+      const filterDays = days + 2;
+      const limitPlaceholder = from && to ? "$4" : "$3";
+      const params = from && to ? [ch.id, from, to, limit] : [ch.id, filterDays, limit];
+
+      rows = await queryMany(
+        `SELECT date, views, engaged_views, watch_time_hours,
+                avg_view_duration, revenue
+         FROM channel_analytics
+         WHERE channel_id = $1
+           AND ${dateFilter}
+         ORDER BY date DESC
+         LIMIT ${limitPlaceholder}`,
+        params
+      );
+
+      summary = await queryOne(
+        `SELECT
+           COALESCE(SUM(views),0)::text            AS total_views,
+           COALESCE(SUM(engaged_views),0)::text    AS total_engaged,
+           COALESCE(SUM(watch_time_hours),0)::text AS total_watch_hours,
+           COALESCE(SUM(revenue),0)::text          AS total_revenue
+         FROM (
+           SELECT views, engaged_views, watch_time_hours, revenue
+           FROM channel_analytics
+           WHERE channel_id = $1
+             AND ${dateFilter}
+           ORDER BY date DESC
+           LIMIT ${limitPlaceholder}
+         ) sub`,
+        params
+      );
+    }
+
+    // Fetch period_summary for 90/365/lifetime presets (YouTube Studio total).
+    const periodKey = isLifetime ? "lifetime" : (days === 90 || days === 365) ? String(days) : null;
+    const period_summary = periodKey ? await (async () => {
+      const ps = await queryOne<{
+        views: string; engaged_views: string;
+        watch_time_hours: string; avg_view_duration: string | null;
+        revenue: string; captured_date: string;
+      }>(
+        `SELECT views::text, engaged_views::text, watch_time_hours::text,
+                avg_view_duration, revenue::text, captured_date::text
+         FROM channel_analytics_period
+         WHERE channel_id = $1 AND period = $2`,
+        [ch.id, periodKey]
+      );
+      if (!ps) return null;
+      return {
+        total_views:       Number(ps.views),
+        total_engaged:     Number(ps.engaged_views),
+        total_watch_hours: Number(ps.watch_time_hours),
+        avg_view_duration: ps.avg_view_duration,
+        total_revenue:     Number(ps.revenue),
+        captured_date:     ps.captured_date,
+      };
+    })() : undefined;
 
     res.json({
       channel_id: ch.id,
-      days,
+      days: isLifetime ? "lifetime" : days,
       summary: {
         total_views:       Number(summary?.total_views       ?? 0),
         total_engaged:     Number(summary?.total_engaged     ?? 0),
         total_watch_hours: Number(summary?.total_watch_hours ?? 0),
         total_revenue:     Number(summary?.total_revenue     ?? 0),
       },
+      period_summary,
       items: rows,
     });
   } catch(e) { next(e); }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -183,7 +183,7 @@ export default function DashboardPage() {
   const navigate  = useNavigate();
   const toast     = useToast();
   const snapshot  = useSnapshotAll();
-  const [revenueView, setRevenueView] = useState<"cms" | "partner">("cms");
+  const [revenueView, setRevenueView] = useState<"cms" | "partner" | "topic">("cms");
 
   const { data: cmsData, refetch: refetchCms }    = useCmsList();
   const { data: allChannelsData } = useChannelList({ page: 1, limit: 1 });
@@ -193,9 +193,10 @@ export default function DashboardPage() {
   });
   const { data: partnersData }  = usePartnerList({ limit: 1 });
   const { data: violationsData } = useViolationList({ limit: 6, result: "" });
-  const { data: breakdownCms } = useRevenueBreakdown("cms", 30);
-  const { data: breakdownPartner } = useRevenueBreakdown("partner", 30);
-  const { data: systemDaily }   = useRevenueSystemDaily(30);
+  const { data: breakdownCms } = useRevenueBreakdown("cms", 28);
+  const { data: breakdownPartner } = useRevenueBreakdown("partner", 28);
+  const { data: breakdownTopic } = useRevenueBreakdown("topic", 28);
+  const { data: systemDaily }   = useRevenueSystemDaily(28);
   const { data: submissions }   = useSubmissionList({ limit: 50 });
 
   const cmsList = cmsData?.items ?? [];
@@ -222,7 +223,7 @@ export default function DashboardPage() {
     revenue: Number(r.revenue ?? 0),
   }));
   type BreakdownRow = { name: string; revenue: number };
-  const breakdownRowsRaw = (revenueView === "cms" ? breakdownCms : breakdownPartner) as BreakdownRow[] | undefined;
+  const breakdownRowsRaw = (revenueView === "cms" ? breakdownCms : revenueView === "partner" ? breakdownPartner : breakdownTopic) as BreakdownRow[] | undefined;
   const mergedByName = new Map<string, number>();
   (breakdownRowsRaw ?? []).forEach((r) => {
     const key = r.name ?? "—";
@@ -327,7 +328,7 @@ export default function DashboardPage() {
         {/* Revenue daily line chart */}
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.md, padding: "18px 20px", boxShadow: SHADOW.sm }}>
           <SectionHeader
-            title="Doanh thu toàn hệ thống (30 ngày)"
+            title="Doanh thu toàn hệ thống (28 ngày)"
             action={<Button variant="ghost" size="sm" icon={<ArrowRight size={12} />} onClick={() => navigate("/revenue")}>Chi tiết</Button>}
           />
           {systemDailyData.length > 0 ? (
@@ -338,7 +339,7 @@ export default function DashboardPage() {
                 <YAxis tick={{ fontSize: 10, fill: C.textMuted }} tickLine={false} axisLine={false}
                   tickFormatter={(v: number) => v >= 1000 ? `$${(v/1000).toFixed(0)}K` : `$${v}`} />
                 <Tooltip
-                  contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                  contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
                   formatter={(v: number) => [fmtCurrency(v), "Revenue"]}
                 />
                 <Line type="monotone" dataKey="revenue" stroke={C.amber} strokeWidth={2.5} dot={false} name="Revenue" />
@@ -355,7 +356,7 @@ export default function DashboardPage() {
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.md, boxShadow: SHADOW.sm }}>
           <div style={{ padding: "16px 16px 0" }}>
             <SectionHeader
-              title={revenueView === "cms" ? "Hiệu suất doanh thu theo net" : "Hiệu suất doanh thu theo đối tác"}
+              title={revenueView === "cms" ? "Hiệu suất doanh thu theo net" : revenueView === "partner" ? "Hiệu suất doanh thu theo đối tác" : "Hiệu suất doanh thu theo topic"}
               action={<Button variant="ghost" size="sm" icon={<ArrowRight size={12} />} onClick={() => navigate("/revenue")}>Chi tiết</Button>}
             />
             <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
@@ -372,6 +373,13 @@ export default function DashboardPage() {
                 onClick={() => setRevenueView("partner")}
               >
                 Theo đối tác
+              </Button>
+              <Button
+                size="sm"
+                variant={revenueView === "topic" ? "primary" : "secondary"}
+                onClick={() => setRevenueView("topic")}
+              >
+                Theo topic
               </Button>
             </div>
           </div>
@@ -398,7 +406,7 @@ export default function DashboardPage() {
                     ))}
                   </Pie>
                   <Tooltip
-                    contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                    contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
                     labelStyle={{ color: C.text }}
                     itemStyle={{ color: C.text }}
                     formatter={(v: number, _name: string, item: { payload?: { name?: string } }) => [
@@ -476,7 +484,7 @@ export default function DashboardPage() {
                     dataKey="value" paddingAngle={3}>
                     {monoData.map((d, i) => <Cell key={i} fill={d.color} />)}
                   </Pie>
-                  <Tooltip contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} />
+                  <Tooltip contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                 </PieChart>
               </ResponsiveContainer>

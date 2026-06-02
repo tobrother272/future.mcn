@@ -9,6 +9,9 @@ export interface Channel {
   status: string; monetization: string; health: string;
   strikes: number; subscribers: number; monthly_views: number; total_views: number; video: number; monthly_revenue: number;
   link_date: string | null;
+  is_unlinked: boolean;
+  unlinked_at: string | null;
+  unlink_reason: string | null;
   notes: string | null; metadata: Record<string, unknown>;
   created_at: string; updated_at: string;
 }
@@ -60,26 +63,47 @@ export const ChannelService = {
     // range views
     if (filters.min_views != null) { andClauses.push(`c.monthly_views >= $${idx++}`); vals.push(filters.min_views); }
     if (filters.max_views != null) { andClauses.push(`c.monthly_views <= $${idx++}`); vals.push(filters.max_views); }
-    // range revenue
-    if (filters.min_revenue != null) { andClauses.push(`c.monthly_revenue >= $${idx++}`); vals.push(filters.min_revenue); }
-    if (filters.max_revenue != null) { andClauses.push(`c.monthly_revenue <= $${idx++}`); vals.push(filters.max_revenue); }
+    // range revenue — computed from channel_analytics via JOIN
+    if (filters.min_revenue != null) { andClauses.push(`COALESCE(ca_m.monthly_revenue, 0) >= $${idx++}`); vals.push(filters.min_revenue); }
+    if (filters.max_revenue != null) { andClauses.push(`COALESCE(ca_m.monthly_revenue, 0) <= $${idx++}`); vals.push(filters.max_revenue); }
 
     const where = andClauses.length ? `WHERE ${andClauses.join(" AND ")}` : "";
 
-    const allowed = ["name","monthly_revenue","subscribers","monthly_views","created_at","updated_at"];
-    const { sql: pagSql, params: pagParams } = buildPagination(
-      filters.page, filters.limit, idx,
-      filters.sortBy ?? "name", filters.sortDir ?? "asc", allowed
-    );
+    // Build ORDER BY: monthly_revenue must reference the JOIN alias explicitly
+    // to avoid ambiguity with c.monthly_revenue from c.*
+    const sortBy  = filters.sortBy ?? "name";
+    const safeDir = filters.sortDir === "asc" ? "ASC" : "DESC";
+    const allowedCols = ["name","subscribers","monthly_views","created_at","updated_at"];
+    let orderExpr: string;
+    if (sortBy === "monthly_revenue") {
+      orderExpr = `COALESCE(ca_m.monthly_revenue, 0) ${safeDir}`;
+    } else {
+      const safeCol = allowedCols.includes(sortBy) ? sortBy : "name";
+      orderExpr = `c.${safeCol} ${safeDir}`;
+    }
+    const pageLimit = Math.min(500, filters.limit ?? 50);
+    const pageOffset = (Math.max(1, filters.page ?? 1) - 1) * pageLimit;
+    const pagSql = `ORDER BY ${orderExpr} LIMIT $${idx} OFFSET $${idx + 1}`;
+    const pagParams = [pageLimit, pageOffset];
+
+    // Subquery to compute monthly revenue from channel_analytics (current month)
+    const caMonthJoin = `LEFT JOIN (
+       SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
+       FROM channel_analytics
+       WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
+       GROUP BY channel_id
+     ) ca_m ON ca_m.channel_id = c.id`;
 
     const countRes = await queryOne<{ count: string }>(
       `SELECT COUNT(*)::text AS count
        FROM channel c
        LEFT JOIN topic t ON c.topic_id = t.id
+       ${caMonthJoin}
        ${where}`, vals
     );
     const rows = await queryMany<Channel & { cms_name?: string; partner_name?: string; topic_name?: string }>(
       `SELECT c.*,
+              COALESCE(ca_m.monthly_revenue, 0)::float8 AS monthly_revenue,
               cm.name AS cms_name,
               p.name  AS partner_name,
               t.name  AS topic_name
@@ -87,6 +111,7 @@ export const ChannelService = {
        LEFT JOIN cms cm     ON c.cms_id     = cm.id
        LEFT JOIN partner p  ON c.partner_id = p.id
        LEFT JOIN topic t    ON c.topic_id   = t.id
+       ${caMonthJoin}
        ${where} ${pagSql}`,
       [...vals, ...pagParams]
     );
@@ -100,11 +125,22 @@ export const ChannelService = {
 
   async getById(id: string) {
     const ch = await queryOne<Channel & { cms_name?: string; partner_name?: string }>(
-      `SELECT c.*, cm.name AS cms_name, p.name AS partner_name, t.name AS topic_name
+      `SELECT c.*,
+              cm.name AS cms_name,
+              p.name  AS partner_name,
+              t.name  AS topic_name,
+              COALESCE(ca_m.monthly_revenue, c.monthly_revenue, 0)::float8 AS monthly_revenue
        FROM channel c
-       LEFT JOIN cms cm ON c.cms_id = cm.id
-       LEFT JOIN partner p ON c.partner_id = p.id
-       LEFT JOIN topic t ON c.topic_id = t.id
+       LEFT JOIN cms cm     ON c.cms_id     = cm.id
+       LEFT JOIN partner p  ON c.partner_id = p.id
+       LEFT JOIN topic t    ON c.topic_id   = t.id
+       LEFT JOIN (
+         SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
+         FROM channel_analytics
+         WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
+           AND date <= CURRENT_DATE - 2
+         GROUP BY channel_id
+       ) ca_m ON ca_m.channel_id = c.id
        WHERE c.id = $1`,
       [id]
     );
@@ -141,15 +177,33 @@ export const ChannelService = {
     name: string; country: string; status: string; monetization: string; health: string;
     strikes: number; subscribers: number; monthly_views: number; total_views: number; video: number;
     monthly_revenue: number; link_date: string | null; notes: string; metadata: Record<string, unknown>;
+    is_unlinked: boolean; unlinked_at: string | null; unlink_reason: string | null;
   }>) {
     await ChannelService.getById(id);
+    const normalized: Record<string, unknown> = { ...data };
+    if (Object.prototype.hasOwnProperty.call(normalized, "cms_id")) {
+      const isUnlink = normalized.cms_id === null || normalized.cms_id === "";
+      if (isUnlink) {
+        normalized.is_unlinked = true;
+        normalized.unlinked_at = normalized.unlinked_at ?? new Date().toISOString();
+        normalized.unlink_reason = normalized.unlink_reason ?? "manual_unlink";
+        if (!Object.prototype.hasOwnProperty.call(normalized, "status")) normalized.status = "Terminated";
+        if (!Object.prototype.hasOwnProperty.call(normalized, "monetization")) normalized.monetization = "Off";
+      } else {
+        normalized.is_unlinked = false;
+        normalized.unlinked_at = null;
+        normalized.unlink_reason = null;
+      }
+    }
+
     const allowed = ["cms_id","partner_id","topic_id","yt_id","name","country","status",
                      "monetization","health","strikes","subscribers","monthly_views","total_views",
-                     "video","monthly_revenue","link_date","notes","metadata"];
+                     "video","monthly_revenue","link_date","notes","metadata",
+                     "is_unlinked","unlinked_at","unlink_reason"];
     const sets: string[] = [];
     const vals: unknown[] = [];
     let idx = 1;
-    for (const [k, v] of Object.entries(data)) {
+    for (const [k, v] of Object.entries(normalized)) {
       if (!allowed.includes(k) || v === undefined) continue;
       sets.push(`${k}=$${idx++}`);
       vals.push(k === "metadata" ? JSON.stringify(v) : v);
@@ -168,13 +222,39 @@ export const ChannelService = {
     return { ok: true };
   },
 
+  async bulkDelete(ids: string[]) {
+    if (!ids.length) return { deleted: 0 };
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(",");
+    const rows = await queryMany<{ id: string }>(
+      `DELETE FROM channel WHERE id IN (${placeholders}) RETURNING id`,
+      ids
+    );
+    return { deleted: rows.length };
+  },
+
   async bulkEdit(ids: string[], updates: Record<string, unknown>) {
     if (!ids.length) return { count: 0 };
-    const allowed = ["status","monetization","health","cms_id","partner_id","topic_id"];
+    const normalized: Record<string, unknown> = { ...updates };
+    if (Object.prototype.hasOwnProperty.call(normalized, "cms_id")) {
+      const isUnlink = normalized.cms_id === null || normalized.cms_id === "";
+      if (isUnlink) {
+        normalized.is_unlinked = true;
+        normalized.unlinked_at = new Date().toISOString();
+        normalized.unlink_reason = "manual_unlink";
+        if (!Object.prototype.hasOwnProperty.call(normalized, "status")) normalized.status = "Terminated";
+        if (!Object.prototype.hasOwnProperty.call(normalized, "monetization")) normalized.monetization = "Off";
+      } else {
+        normalized.is_unlinked = false;
+        normalized.unlinked_at = null;
+        normalized.unlink_reason = null;
+      }
+    }
+
+    const allowed = ["status","monetization","health","cms_id","partner_id","topic_id","is_unlinked","unlinked_at","unlink_reason"];
     const sets: string[] = [];
     const vals: unknown[] = [];
     let idx = 1;
-    for (const [k, v] of Object.entries(updates)) {
+    for (const [k, v] of Object.entries(normalized)) {
       if (!allowed.includes(k) || v === undefined) continue;
       sets.push(`${k}=$${idx++}`);
       vals.push(v);

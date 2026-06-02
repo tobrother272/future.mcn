@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { query, queryOne } from "../db/helpers.js";
+import { query, queryMany, queryOne } from "../db/helpers.js";
 import { requireCmsApiKey } from "../middleware/cms-api-key.js";
 import { ValidationError, NotFoundError } from "../lib/errors.js";
 import { nanoid } from "../lib/nanoid.js";
@@ -64,6 +64,23 @@ function parseHumanNumber(v: unknown): number {
 
 /** Zod preprocessor that converts human-readable strings to integers. */
 const humanInt = z.preprocess(parseHumanNumber, z.number().int().nonnegative());
+
+/**
+ * Parse human-readable numbers to float (preserves decimals).
+ * Used for revenue fields where cents matter ($48.52 → 48.52).
+ */
+function parseHumanFloat(v: unknown): number {
+  if (v === null || v === undefined || v === "") return 0;
+  if (typeof v === "number") return v;
+  const s = String(v).trim().replace(/[£$€¥₫₩฿₹]/g, "").replace(/,/g, "").toUpperCase();
+  const multipliers: Record<string, number> = { K: 1_000, M: 1_000_000, B: 1_000_000_000 };
+  const last = s.slice(-1);
+  if (last in multipliers) {
+    return parseFloat(s.slice(0, -1)) * multipliers[last]!;
+  }
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
 
 /**
  * Parse human-readable date strings into ISO YYYY-MM-DD.
@@ -157,32 +174,45 @@ const syncBodySchema = z.object({
  */
 async function upsertChannel(cms_id: string, row: z.infer<typeof channelItemSchema>) {
   const id = nanoid("CH");
-  const result = await queryOne<{ id: string; was_insert: boolean }>(
-    `INSERT INTO channel (
-       id, cms_id, yt_id, name, country, subscribers, monthly_views,
-       total_views, video, monthly_revenue, monetization, status, link_date, topic_id, metadata,
-       last_sync
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, NOW())
-     ON CONFLICT (yt_id) DO UPDATE SET
-       cms_id          = EXCLUDED.cms_id,
-       name            = EXCLUDED.name,
-       country         = EXCLUDED.country,
-       subscribers     = EXCLUDED.subscribers,
-       monthly_views   = EXCLUDED.monthly_views,
-       total_views     = EXCLUDED.total_views,
-       video           = EXCLUDED.video,
-       monthly_revenue = EXCLUDED.monthly_revenue,
-       monetization    = EXCLUDED.monetization,
-       status          = EXCLUDED.status,
-       link_date       = COALESCE(EXCLUDED.link_date, channel.link_date),
-       topic_id        = COALESCE(EXCLUDED.topic_id, channel.topic_id),
-       metadata        = channel.metadata || EXCLUDED.metadata,
-       last_sync       = NOW(),
-       updated_at      = NOW()
-     RETURNING id, (xmax = 0) AS was_insert`,
+  const result = await queryOne<{ id: string; was_insert: boolean; old_mono: string | null; new_mono: string }>(
+    `WITH old_val AS (
+       SELECT monetization FROM channel WHERE yt_id = $3
+     ),
+     upserted AS (
+       INSERT INTO channel (
+         id, cms_id, yt_id, name, country, subscribers, monthly_views,
+         total_views, video, monetization, status, link_date, topic_id, metadata,
+         last_sync
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, NOW())
+       ON CONFLICT (yt_id) DO UPDATE SET
+         cms_id          = EXCLUDED.cms_id,
+         name            = EXCLUDED.name,
+         country         = EXCLUDED.country,
+         subscribers     = EXCLUDED.subscribers,
+         monthly_views   = EXCLUDED.monthly_views,
+         total_views     = EXCLUDED.total_views,
+         video           = EXCLUDED.video,
+         -- monthly_revenue is NOT updated here; it is computed exclusively
+         -- from channel_analytics by the /analytics/sync endpoint so the
+         -- value always reflects actual pushed data, not tool estimates.
+         monetization    = EXCLUDED.monetization,
+         status          = EXCLUDED.status,
+         is_unlinked     = false,
+         unlinked_at     = NULL,
+         unlink_reason   = NULL,
+         link_date       = COALESCE(EXCLUDED.link_date, channel.link_date),
+         topic_id        = COALESCE(EXCLUDED.topic_id, channel.topic_id),
+         metadata        = channel.metadata || EXCLUDED.metadata,
+         last_sync       = NOW(),
+         updated_at      = NOW()
+       RETURNING id, (xmax = 0) AS was_insert, monetization AS new_mono
+     )
+     SELECT u.id, u.was_insert, u.new_mono, o.monetization AS old_mono
+     FROM upserted u
+     LEFT JOIN old_val o ON true`,
     [
       id, cms_id, row.yt_id, row.name, row.country,
-      row.subscribers, row.monthly_views, row.total_views, row.video, row.monthly_revenue,
+      row.subscribers, row.monthly_views, row.total_views, row.video,
       row.monetization, row.status, row.link_date ?? null, row.topic_id ?? null,
       JSON.stringify(row.metadata ?? {}),
     ],
@@ -221,11 +251,14 @@ async function recordSeen(sync_id: string, cms_id: string, yt_ids: string[]) {
  * and a sample list of names so the operator can spot-check.
  */
 async function reconcileMissing(sync_id: string, cms_id: string) {
+  // NOTE: also include channels already Terminated but is_unlinked=false —
+  // this lets us backfill the unlink flag on channels marked Terminated
+  // before migration 036 added the flag (or by manual edits).
   const result = await queryOne<{ terminated: string; names: string[] }>(
     `WITH missing AS (
        SELECT c.id, c.name FROM channel c
         WHERE c.cms_id = $1
-          AND c.status <> 'Terminated'
+          AND (c.status <> 'Terminated' OR c.is_unlinked = false)
           AND c.yt_id IS NOT NULL
           AND NOT EXISTS (
             SELECT 1 FROM cms_sync_run r
@@ -233,7 +266,18 @@ async function reconcileMissing(sync_id: string, cms_id: string) {
           )
      ),
      upd AS (
-       UPDATE channel SET status = 'Terminated', updated_at = NOW()
+       -- Flip status to Terminated and reset monetization to Off —
+       -- an unlinked channel is no longer earning, so showing it as
+       -- monetized would inflate the CMS overview stats.
+       -- Revenue fields (monthly_revenue, last_revenue) are intentionally
+       -- preserved so that period stats remain accurate.
+       UPDATE channel
+          SET status       = 'Terminated',
+              monetization = 'Off',
+              is_unlinked  = true,
+              unlinked_at  = COALESCE(channel.unlinked_at, NOW()),
+              unlink_reason= 'sync_missing',
+              updated_at   = NOW()
         WHERE id IN (SELECT id FROM missing)
        RETURNING id, name
      )
@@ -346,12 +390,39 @@ router.post("/channels/sync", async (req, res, next) => {
     // ── Upsert this batch ──────────────────────────────────────────────
     let inserted = 0, updated = 0;
     const ytIds: string[] = [];
+    const monoChanges: { id: string; name: string; yt_id: string; from: string; to: string }[] = [];
     for (const item of parsed.data.items) {
       const r = await upsertChannel(cms_id, item);
       if (r.was_insert) inserted++; else updated++;
       ytIds.push(item.yt_id);
+      // Detect monetization change (only for existing channels, not new inserts)
+      if (!r.was_insert && r.old_mono && r.old_mono !== r.new_mono) {
+        const ch = await queryOne<{ name: string }>(`SELECT name FROM channel WHERE id = $1`, [r.id]);
+        monoChanges.push({ id: r.id, name: ch?.name ?? item.name, yt_id: item.yt_id, from: r.old_mono, to: r.new_mono });
+      }
     }
     await recordSeen(sync_id, cms_id, ytIds);
+
+    // ── Create inbox message if monetization changed ───────────────────
+    if (monoChanges.length > 0) {
+      const turnedOn  = monoChanges.filter((c) => c.to === "On");
+      const turnedOff = monoChanges.filter((c) => c.from === "On" && c.to === "Off");
+      if (turnedOn.length > 0 || turnedOff.length > 0) {
+        const parts: string[] = [];
+        if (turnedOn.length)  parts.push(`${turnedOn.length} kênh bật BKT`);
+        if (turnedOff.length) parts.push(`${turnedOff.length} kênh tắt BKT`);
+        await queryOne(
+          `INSERT INTO inbox (id, type, title, body, cms_id)
+           VALUES ($1, 'monetization_change', $2, $3::jsonb, $4)`,
+          [
+            nanoid("INB"),
+            `Thay đổi kiếm tiền: ${parts.join(", ")}`,
+            JSON.stringify({ turned_on: turnedOn, turned_off: turnedOff }),
+            cms_id,
+          ],
+        );
+      }
+    }
 
     // ── Reconcile when caller marks the run final ──────────────────────
     let terminated = 0, terminatedSample: string[] = [];
@@ -411,13 +482,22 @@ const analyticsItemSchema = z.object({
   }, z.string().date()),
   views:             humanInt.default(0),
   engaged_views:     humanInt.default(0),
-  watch_time_hours:  z.preprocess(parseHumanNumber, z.number().nonnegative()).default(0),
+  watch_time_hours:  z.preprocess(parseHumanFloat, z.number().nonnegative()).default(0),
   avg_view_duration: z.preprocess(normDuration, z.string().nullable().optional()),
-  revenue:           z.preprocess(parseHumanNumber, z.number().nonnegative()).default(0),
+  revenue:           z.preprocess(parseHumanFloat, z.number().nonnegative()).default(0),
 });
 
 const analyticsSyncSchema = z.object({
   items: z.array(analyticsItemSchema).max(1000),
+  summaries: z.array(z.object({
+    period:            z.union([z.number().int().positive(), z.literal("lifetime")])
+                         .transform(String),  // normalize → "90", "365", "lifetime"
+    views:             humanInt.default(0),
+    engaged_views:     humanInt.default(0),
+    watch_time_hours:  z.preprocess(parseHumanFloat, z.number().nonnegative()).default(0),
+    avg_view_duration: z.preprocess(normDuration, z.string().nullable().optional()),
+    revenue:           z.preprocess(parseHumanFloat, z.number().nonnegative()).default(0),
+  })).optional(),
 });
 
 /**
@@ -479,23 +559,57 @@ router.post("/analytics/sync/:yt_id", async (req, res, next) => {
       );
     }
 
+    // Upsert period summaries (90/365-day pre-aggregated totals from YouTube Studio).
+    // UNIQUE(channel_id, period) — one row per channel per period.
+    if (parsed.data.summaries?.length) {
+      for (const s of parsed.data.summaries) {
+        const pid = `CAP_${ch.id}_${s.period}`;
+        await query(
+          `INSERT INTO channel_analytics_period
+             (id, channel_id, cms_id, period, captured_date,
+              views, engaged_views, watch_time_hours, avg_view_duration, revenue)
+           VALUES ($1,$2,$3,$4,CURRENT_DATE,$5,$6,$7,$8,$9)
+           ON CONFLICT (channel_id, period) DO UPDATE SET
+             cms_id            = EXCLUDED.cms_id,
+             captured_date     = EXCLUDED.captured_date,
+             views             = EXCLUDED.views,
+             engaged_views     = EXCLUDED.engaged_views,
+             watch_time_hours  = EXCLUDED.watch_time_hours,
+             avg_view_duration = EXCLUDED.avg_view_duration,
+             revenue           = EXCLUDED.revenue,
+             updated_at        = NOW()`,
+          [
+            pid, ch.id, cms_id, s.period,
+            s.views, s.engaged_views, s.watch_time_hours,
+            s.avg_view_duration ?? null, s.revenue,
+          ],
+        );
+      }
+    }
+
     // Recompute last_revenue from the most recent date stored in DB (not from
     // this batch) so that syncing historical batches never overwrites newer data.
-    // monthly_revenue = sum of last 30 calendar days from today (KPI field).
+    // monthly_revenue = sum from the 1st of the current month to match YouTube
+    // NET dashboard figures. Only overwrite if there is actual data this month —
+    // if SUM is NULL/0 (e.g. channel was unlinked), keep the existing value so
+    // previously-captured revenue is not lost mid-period.
     // Only update last_sync_analytic, not last_sync (last_sync = channel-list sync).
     const updated = await queryOne<{ last_revenue: number }>(
       `UPDATE channel
-       SET last_revenue       = COALESCE((
+       SET            last_revenue       = COALESCE((
              SELECT revenue FROM channel_analytics
              WHERE channel_id = $1
              ORDER BY date DESC
              LIMIT 1
            ), 0),
-           monthly_revenue    = COALESCE((
-             SELECT SUM(revenue) FROM channel_analytics
-             WHERE channel_id = $1
-               AND date >= CURRENT_DATE - 30
-           ), 0),
+           monthly_revenue    = COALESCE(
+             NULLIF((
+               SELECT SUM(revenue) FROM channel_analytics
+               WHERE channel_id = $1
+                 AND date >= DATE_TRUNC('month', CURRENT_DATE)
+             ), 0),
+             channel.monthly_revenue
+           ),
            last_sync_analytic = NOW(),
            updated_at         = NOW()
        WHERE id = $1

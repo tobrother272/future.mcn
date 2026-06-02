@@ -289,7 +289,7 @@ export function useResetPartnerAccountPassword() {
 export interface UnassignedAccount {
   id: string;
   email: string;
-  full_name: string;
+  full_name: string | null;
   status: string;
   created_at: string;
 }
@@ -307,10 +307,13 @@ export function useAssignPartnerAccount() {
   return useMutation({
     mutationFn: ({ userId, partner_id }: { userId: string; partner_id: string | null }) =>
       apiClient.patch(`partners/accounts/${userId}/assign-partner`, { json: { partner_id } }).json<{ id: string; partner_id: string | null }>(),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ["partner-accounts"] });
       qc.invalidateQueries({ queryKey: ["partner-accounts-unassigned"] });
       qc.invalidateQueries({ queryKey: ["partners"] });
+      if (variables.partner_id) {
+        qc.invalidateQueries({ queryKey: ["partners", variables.partner_id, "profile"] });
+      }
     },
   });
 }

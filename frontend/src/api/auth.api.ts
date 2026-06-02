@@ -48,11 +48,26 @@ export function useRegisterPartner() {
 export function useUpdateMe() {
   const setAuth = useAuthStore((s) => s.setAuth);
   const token   = useAuthStore((s) => s.token);
+  const current = useAuthStore((s) => s.user);
   return useMutation({
     mutationFn: (data: { full_name?: string; phone?: string }) =>
       apiClient.patch("auth/me", { json: data }).json<CurrentUser>(),
     onSuccess: (updated) => {
-      if (token) setAuth({ ...updated } as CurrentUser, token);
+      if (!token || !current) return;
+      // Only patch fields that PATCH /auth/me can legitimately change.
+      // Never overwrite partner_id / userType / role from the server response
+      // because an admin may have reassigned the account between login and this call,
+      // which would cause the partner dashboard to go blank.
+      const u = updated as Record<string, unknown>;
+      const normalized: CurrentUser = {
+        ...current,
+        ...(u.full_name !== undefined  ? { full_name:  u.full_name  } : {}),
+        ...(u.phone     !== undefined  ? { phone:      u.phone      } : {}),
+        ...(u.status    !== undefined  ? { status:     u.status     } : {}),
+        ...(u.updated_at !== undefined ? { updated_at: u.updated_at } : {}),
+        ...(u.last_login !== undefined ? { last_login: u.last_login } : {}),
+      } as CurrentUser;
+      setAuth(normalized, token);
     },
   });
 }

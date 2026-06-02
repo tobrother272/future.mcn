@@ -33,6 +33,7 @@ const upload = multer({
 // ── Body schema ───────────────────────────────────────────────
 const bodySchema = z.object({
   name:        z.string().min(1),
+  category:    z.string().optional(),
   content:     z.string().optional(),
   application: z.string().optional(),
   topic_ids:   z.array(z.string()).optional(),
@@ -43,14 +44,38 @@ const policyImageSchema = z.object({
   caption: z.string().default(""),
 });
 
+// GET /api/policies/categories
+router.get("/categories", async (_req, res, next) => {
+  try { res.json(await PolicyService.listCategories()); } catch (e) { next(e); }
+});
+
+// POST /api/policies/categories
+router.post("/categories", async (req, res, next) => {
+  try {
+    const { name } = z.object({ name: z.string().min(1).max(100) }).parse(req.body);
+    res.status(201).json(await PolicyService.createCategory(name));
+  } catch (e) { next(e); }
+});
+
+// DELETE /api/policies/categories/:name
+router.delete("/categories/:name", async (req, res, next) => {
+  try {
+    const name = decodeURIComponent(req.params.name ?? "");
+    if (!name) { res.status(400).json({ error: "Thiếu tên" }); return; }
+    await PolicyService.deleteCategory(name);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 // GET /api/policies
 router.get("/", async (req, res, next) => {
   try {
     res.json(await PolicyService.list({
-      search:   req.query.search   as string | undefined,
-      topic_id: req.query.topic_id as string | undefined,
-      limit:    req.query.limit    ? Number(req.query.limit)  : undefined,
-      offset:   req.query.offset   ? Number(req.query.offset) : undefined,
+      search:   req.query.search    as string | undefined,
+      topic_id: req.query.topic_id  as string | undefined,
+      category: req.query.category  as string | undefined,
+      limit:    req.query.limit     ? Number(req.query.limit)  : undefined,
+      offset:   req.query.offset    ? Number(req.query.offset) : undefined,
     }));
   } catch (e) { next(e); }
 });

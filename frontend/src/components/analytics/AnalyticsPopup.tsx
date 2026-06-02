@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer,
@@ -144,7 +144,7 @@ function GroupedLineChart({
           }}
         />
         <Tooltip
-          contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+          contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
           labelStyle={{ color: C.text }}
           itemStyle={{ color: C.text }}
           formatter={(v: number, name: string) => [
@@ -211,7 +211,7 @@ function ChannelAnalyticsChart({
           }}
         />
         <Tooltip
-          contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+          contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
           labelStyle={{ color: C.text }}
           itemStyle={{ color: C.text }}
           formatter={(v: number) => [
@@ -238,7 +238,7 @@ export function PartnerAnalyticsPopup({
   isParent: boolean;
   currency?: string;
 }) {
-  const [periodKey, setPeriodKey] = useState<PeriodKey>("30");
+  const [periodKey, setPeriodKey] = useState<PeriodKey>("28");
   const [fromDate, setFromDate]   = useState("");
   const [toDate, setToDate]       = useState(todayInputDate());
   const [metric, setMetric]       = useState<Metric>("revenue");
@@ -345,7 +345,7 @@ export function ChannelAnalyticsPopup({
   channelName: string;
   currency?: string;
 }) {
-  const [periodKey, setPeriodKey] = useState<PeriodKey>("30");
+  const [periodKey, setPeriodKey] = useState<PeriodKey>("28");
   const [fromDate, setFromDate]   = useState("");
   const [toDate, setToDate]       = useState(todayInputDate());
   const [metric, setMetric]       = useState<Metric>("revenue");

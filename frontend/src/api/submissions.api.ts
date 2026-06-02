@@ -45,6 +45,7 @@ export interface SubmissionCreate {
   video_url?: string;
   storage_type?: string;
   storage_url?: string;
+  category?: string;
   description?: string;
   category?: string;
 }

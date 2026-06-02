@@ -11,6 +11,7 @@ export interface PolicyImage {
 export interface Policy {
   id: string;
   name: string;
+  category: string;
   content: string;
   application: string;
   images: PolicyImage[];
@@ -21,12 +22,42 @@ export interface Policy {
 
 interface PaginatedPolicies { items: Policy[]; total: number }
 
-export function usePolicyList(params?: { search?: string; topic_id?: string; limit?: number; offset?: number }) {
+export function usePolicyCategories() {
+  return useQuery<string[]>({
+    queryKey: ["policy-categories"],
+    queryFn: () => apiClient.get("policies/categories").json<string[]>(),
+    staleTime: 60_000,
+  });
+}
+
+export function useCreatePolicyCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiClient.post("policies/categories", { json: { name } }).json<string>(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["policy-categories"] }),
+  });
+}
+
+export function useDeletePolicyCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiClient.delete(`policies/categories/${encodeURIComponent(name)}`).json<{ ok: boolean }>(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["policy-categories"] });
+      qc.invalidateQueries({ queryKey: ["policies"] });
+    },
+  });
+}
+
+export function usePolicyList(params?: { search?: string; topic_id?: string; category?: string; limit?: number; offset?: number }) {
   const query = new URLSearchParams();
-  if (params?.search)   query.set("search",   params.search);
-  if (params?.topic_id) query.set("topic_id", params.topic_id);
-  if (params?.limit)    query.set("limit",    String(params.limit));
-  if (params?.offset)   query.set("offset",   String(params.offset));
+  if (params?.search)    query.set("search",    params.search);
+  if (params?.topic_id)  query.set("topic_id",  params.topic_id);
+  if (params?.category)  query.set("category",  params.category);
+  if (params?.limit)     query.set("limit",     String(params.limit));
+  if (params?.offset)    query.set("offset",    String(params.offset));
   return useQuery<PaginatedPolicies>({
     queryKey: ["policies", params],
     queryFn: () => apiClient.get(`policies?${query}`).json<PaginatedPolicies>(),
@@ -44,7 +75,7 @@ export function usePolicy(id: string) {
 export function useCreatePolicy() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; content?: string; application?: string; topic_ids?: string[] }) =>
+    mutationFn: (data: { name: string; category?: string; content?: string; application?: string; topic_ids?: string[] }) =>
       apiClient.post("policies", { json: data }).json<Policy>(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["policies"] }),
   });
@@ -53,7 +84,7 @@ export function useCreatePolicy() {
 export function useUpdatePolicy(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name?: string; content?: string; application?: string; topic_ids?: string[] }) =>
+    mutationFn: (data: { name?: string; category?: string; content?: string; application?: string; topic_ids?: string[] }) =>
       apiClient.put(`policies/${id}`, { json: data }).json<Policy>(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["policies"] }),
   });

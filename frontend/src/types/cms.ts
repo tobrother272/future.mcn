@@ -37,6 +37,9 @@ export interface CmsStats {
   total_subscribers: number;
   total_monthly_views: number;
   partner_count: number;
+  revenue_90: number;
+  revenue_365: number;
+  revenue_lifetime: number;
 }
 
 export interface CmsApiKey {

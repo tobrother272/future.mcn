@@ -15,7 +15,7 @@ import type { Channel } from "@/types/channel";
 const COL_HEADERS = [
   "Channel", "Topic", "Partner", "Status", "Monetization",
   "Link Date", "Copyright", "Video", "Total Views", "Subscribers",
-  "Revenue", "Last Revenue",
+  "28 Days Revenue", "Last Day Revenue",
 ] as const;
 
 // ── Channel table row ───────────────────────────────────────
@@ -159,6 +159,8 @@ function PartnerGroup({
   const totalRev  = channels.reduce((s, c) => s + (c.monthly_revenue ?? 0), 0);
   const active    = channels.filter((c) => c.status === "Active").length;
   const monetized = channels.filter((c) => c.monetization === "On").length;
+  const totalSubs  = channels.reduce((s, c) => s + c.subscribers, 0);
+  const totalViews = channels.reduce((s, c) => s + c.monthly_views, 0);
   const accentColor = isChild ? C.teal : C.blue;
 
   return (
@@ -198,9 +200,8 @@ function PartnerGroup({
           </div>
         </div>
         <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
-          <StatBadge icon={<Users size={11} />} value={fmt(channels.reduce((s, c) => s + c.subscribers, 0))} />
-          <StatBadge icon={<Eye size={11} />} value={fmt(channels.reduce((s, c) => s + c.monthly_views, 0))} />
-          <StatBadge icon={<DollarSign size={11} />} value={fmtCurrency(totalRev, "USD")} color={C.amber} />
+          <StatBadge icon={<Users size={11} />} value={fmt(totalSubs)} />
+          <StatBadge icon={<Eye size={11} />} value={fmt(totalViews)} />          <StatBadge icon={<DollarSign size={11} />} value={fmtCurrency(totalRev, "USD")} color={C.amber} />
         </div>
       </div>
 
@@ -223,7 +224,7 @@ function PartnerGroup({
                       width: h === "Copyright" ? 70 : undefined,
                       textAlign:
                         h === "Copyright" ? "center"
-                        : ["Video", "Total Views", "Subscribers", "Revenue", "Last Revenue"].includes(h) ? "right"
+                        : ["Video", "Total Views", "Subscribers", "28 Days Revenue", "Last Day Revenue"].includes(h) ? "right"
                         : "left",
                       fontSize: 11, fontWeight: 600, color: C.textMuted,
                       whiteSpace: "nowrap", letterSpacing: ".04em",
@@ -244,14 +245,76 @@ function PartnerGroup({
   );
 }
 
-// ── Main Page ─────────────────────────────────────────────────
+// ── Parent summary banner (shown instead of PartnerGroup when parent has children) ──
+function ParentSummaryBanner({
+  profile, stats,
+}: {
+  profile: { name?: string; tier?: string; type?: string } | undefined;
+  stats: { total: number; active: number; monetized: number; subscribers: number; views: number; revenue: number } | undefined;
+}) {
+  return (
+    <div style={{
+      background: `linear-gradient(135deg, ${C.blue}18 0%, ${C.purple}12 100%)`,
+      border: `1px solid ${C.blue}40`,
+      borderRadius: RADIUS.md,
+      padding: "16px 20px",
+      marginBottom: 16,
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ width: 38, height: 38, borderRadius: 8, background: `${C.blue}25`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Building2 size={18} color={C.blue} />
+        </div>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{profile?.name ?? "Đối tác của tôi"}</span>
+            {profile?.tier && <span style={{ fontSize: 11, color: C.textMuted, background: `${C.border}`, padding: "1px 7px", borderRadius: 4 }}>{profile.tier}</span>}
+            {profile?.type && <span style={{ fontSize: 11, color: C.textMuted }}>· {profile.type}</span>}
+          </div>
+          <div style={{ fontSize: 12, color: C.textSub, marginTop: 3 }}>
+            {stats
+              ? <>{stats.total} kênh · {stats.active} active · {stats.monetized} monetized</>
+              : "Đang tải…"}
+          </div>
+        </div>
+      </div>
+      {stats && (
+        <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
+          <StatBadge icon={<Users size={11} />} value={fmt(stats.subscribers)} />
+          <StatBadge icon={<Eye size={11} />} value={fmt(stats.views)} />
+          <StatBadge icon={<DollarSign size={11} />} value={fmtCurrency(stats.revenue, "USD")} color={C.amber} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 export default function PortalChannelsPage() {
   const user      = useAuthStore((s) => s.user);
   const partnerId = user?.userType === "partner" ? (user.partner_id ?? "") : "";
   const [search, setSearch] = useState("");
 
   const { data: profile, refetch } = usePartnerProfile(partnerId);
-  const children = profile?.children ?? [];
+  const children = (profile?.children ?? []) as Array<{ id: string; name: string; tier?: string; type?: string }>;
+
+  // When this is a parent partner, fetch aggregate stats across all children
+  const childrenIds = children.map((c) => c.id);
+  const isParent = childrenIds.length > 0;
+  // Backend auto-scopes to parent+children when no partner_id is specified
+  const { data: allChannelsData, isLoading: allLoading } = useChannelList(
+    { limit: 500 },
+    { enabled: isParent && !!partnerId }
+  );
+  const allChannels = allChannelsData?.items ?? [];
+  const parentAggregateStats = (isParent && !allLoading && allChannelsData) ? {
+    total:       allChannels.length,
+    active:      allChannels.filter((c) => c.status === "Active").length,
+    monetized:   allChannels.filter((c) => c.monetization === "On").length,
+    subscribers: allChannels.reduce((s, c) => s + c.subscribers, 0),
+    views:       allChannels.reduce((s, c) => s + c.monthly_views, 0),
+    revenue:     allChannels.reduce((s, c) => s + (c.monthly_revenue ?? 0), 0),
+  } : undefined;
 
   return (
     <div style={{ padding: "24px 28px" }}>
@@ -287,28 +350,33 @@ export default function PortalChannelsPage() {
         <div style={{ textAlign: "center", padding: 60, color: C.textMuted }}>Tài khoản chưa liên kết với đối tác.</div>
       ) : (
         <>
-          {/* Main partner channels */}
-          <PartnerGroup
-            partnerId={partnerId}
-            partnerName={profile?.name ?? "Đối tác của tôi"}
-            tier={profile?.tier}
-            type={profile?.type}
-            isChild={false}
-            search={search}
-          />
-
-          {/* Child partner channels */}
-          {children.map((child) => (
+          {isParent ? (
+            /* Parent partner: show summary banner + children groups */
+            <>
+              <ParentSummaryBanner profile={profile} stats={parentAggregateStats} />
+              {children.map((child) => (
+                <PartnerGroup
+                  key={child.id}
+                  partnerId={child.id}
+                  partnerName={child.name}
+                  tier={child.tier}
+                  type={child.type}
+                  isChild
+                  search={search}
+                />
+              ))}
+            </>
+          ) : (
+            /* Single (non-parent) partner: show direct channels */
             <PartnerGroup
-              key={child.id}
-              partnerId={child.id}
-              partnerName={child.name}
-              tier={child.tier}
-              type={child.type}
-              isChild
+              partnerId={partnerId}
+              partnerName={profile?.name ?? "Đối tác của tôi"}
+              tier={profile?.tier}
+              type={profile?.type}
+              isChild={false}
               search={search}
             />
-          ))}
+          )}
         </>
       )}
     </div>

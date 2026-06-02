@@ -154,7 +154,7 @@ function BreakdownPie({
                 ))}
               </Pie>
               <Tooltip
-                contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
                 labelStyle={{ color: C.text }}
                 itemStyle={{ color: C.text }}
                 formatter={(v: number, _name: string, item: { payload?: { name?: string } }) => [
@@ -193,7 +193,7 @@ export default function PortalHomePage() {
   const { data: contracts = [] } = usePartnerContracts(partnerId);
 
   // ── Analytics state ─────────────────────────────────────────
-  const [periodKey, setPeriodKey]    = useState<PeriodKey>("30");
+  const [periodKey, setPeriodKey]    = useState<PeriodKey>("28");
   const [fromDate, setFromDate]      = useState<string>("");
   const [toDate, setToDate]          = useState<string>(todayInputDate());
   const [selectedMetrics, setSelectedMetrics] = useState<MetricKey[]>(["revenue", "views"]);
@@ -340,7 +340,7 @@ export default function PortalHomePage() {
         background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.md,
         padding: "10px 14px", boxShadow: SHADOW.sm, marginBottom: 14,
       }}>
-        {PERIOD_OPTIONS.map((opt) => {
+        {PERIOD_OPTIONS.filter((opt) => opt.key !== "180").map((opt) => {
           const active = !fromDate && periodKey === opt.key;
           return (
             <button
@@ -460,7 +460,7 @@ export default function PortalHomePage() {
                   tickFormatter={(v: number) => v >= 1_000_000 ? `${(v/1_000_000).toFixed(1)}M` : v >= 1000 ? `${(v/1000).toFixed(0)}K` : `${v}`} />
               )}
               <Tooltip
-                contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
                 labelStyle={{ color: C.text }}
                 itemStyle={{ color: C.text }}
                 formatter={(v: number, name: string) => {

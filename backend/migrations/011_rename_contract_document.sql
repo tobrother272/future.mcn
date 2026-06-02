@@ -38,7 +38,15 @@ ALTER TABLE contract_document
   TO contract_document_employee_id_fkey;
 
 
--- ── 2. New column: link document to a logical contract ──────
+-- ── 2a. Defensive backfill: ensure all expected columns exist ────────────────
+-- Needed when migration 007 ran on an older schema that lacked these columns
+ALTER TABLE contract_document ADD COLUMN IF NOT EXISTS contract_number TEXT;
+ALTER TABLE contract_document ADD COLUMN IF NOT EXISTS file_name       TEXT NOT NULL DEFAULT '';
+ALTER TABLE contract_document ADD COLUMN IF NOT EXISTS file_path       TEXT NOT NULL DEFAULT '';
+ALTER TABLE contract_document ADD COLUMN IF NOT EXISTS file_size       INTEGER DEFAULT 0;
+ALTER TABLE contract_document ADD COLUMN IF NOT EXISTS upload_date     DATE NOT NULL DEFAULT CURRENT_DATE;
+
+-- ── 2b. New column: link document to a logical contract ──────────────────────
 ALTER TABLE contract_document
   ADD COLUMN IF NOT EXISTS contract_id TEXT
     REFERENCES contract(id) ON DELETE SET NULL;

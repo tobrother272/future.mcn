@@ -88,6 +88,18 @@ export function useDeleteChannel() {
   });
 }
 
+export function useBulkDeleteChannels() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      apiClient.post(`channels/bulk-delete`, { json: { ids } }).json<{ deleted: number }>(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["channels"] });
+      void qc.invalidateQueries({ queryKey: ["cms"] });
+    },
+  });
+}
+
 export interface VideoRow {
   id: string;
   channel_id: string;
@@ -148,12 +160,17 @@ export interface ChannelAnalyticsResponse {
 
 export function useChannelAnalytics(
   channelId: string,
-  opts: { days?: number; from?: string; to?: string } = {}
+  opts: { days?: number; from?: string; to?: string; period?: string } = {}
 ) {
-  const { days = 30, from, to } = opts;
-  const searchParams = from && to ? { from, to } : { days };
+  const { days = 30, from, to, period } = opts;
+  const isLifetime = period === "lifetime";
+  const searchParams = isLifetime
+    ? { period: "lifetime" }
+    : from && to
+      ? { from, to }
+      : { days };
   return useQuery({
-    queryKey: ["channels", channelId, "analytics", from && to ? `${from}~${to}` : days],
+    queryKey: ["channels", channelId, "analytics", isLifetime ? "lifetime" : from && to ? `${from}~${to}` : days],
     queryFn: () =>
       apiClient
         .get(`channels/${channelId}/analytics`, { searchParams })

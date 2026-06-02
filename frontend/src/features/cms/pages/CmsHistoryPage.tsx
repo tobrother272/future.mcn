@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+﻿import { useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ChevronLeft, Upload, CheckCircle } from "lucide-react";
 import {
@@ -18,25 +18,25 @@ function parseRevenueCSV(text: string): Array<{ snapshot_date: string; revenue: 
   const lines = text.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return [];
 
-  const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  const headers = (lines[0] ?? "").split(",").map((h) => h.trim().toLowerCase());
   const idxDate    = headers.findIndex((h) => h === "date");
   const idxViews   = headers.findIndex((h) => h === "views");
   const idxRevenue = headers.findIndex((h) => h.includes("revenue"));
 
   const rows: Array<{ snapshot_date: string; revenue: number; views: number }> = [];
   for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(",").map((c) => c.trim());
-    const date    = idxDate    >= 0 ? cols[idxDate]    : "";
-    const revenue = idxRevenue >= 0 ? cols[idxRevenue] : "";
-    const views   = idxViews   >= 0 ? cols[idxViews]   : "";
+    const cols = (lines[i] ?? "").split(",").map((c) => c.trim());
+    const date    = idxDate    >= 0 ? (cols[idxDate]    ?? "") : "";
+    const revenue = idxRevenue >= 0 ? (cols[idxRevenue] ?? "") : "";
+    const views   = idxViews   >= 0 ? (cols[idxViews]   ?? "") : "";
 
     // Skip Total row and invalid dates
     if (!date || date.toLowerCase() === "total" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
 
     rows.push({
       snapshot_date: date,
-      revenue:       Number(revenue.replace(/[^0-9.]/g, "")) || 0,
-      views:         Number(views.replace(/[^0-9.]/g, ""))   || 0,
+      revenue:       Number((revenue ?? "").replace(/[^0-9.]/g, "")) || 0,
+      views:         Number((views ?? "").replace(/[^0-9.]/g, ""))   || 0,
     });
   }
   return rows;
@@ -178,7 +178,7 @@ type RevRow = { snapshot_date: string; revenue: number; views: number; engaged_v
 export default function CmsHistoryPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [period, setPeriod] = useState<PeriodKey>("30");
+  const [period, setPeriod] = useState<PeriodKey>("28");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState(todayInputDate());
   const [importOpen, setImportOpen] = useState(false);
@@ -187,8 +187,9 @@ export default function CmsHistoryPage() {
     ? { from: fromDate, to: toDate }
     : periodToParams(period);
   const { data: cms } = useCms(id!);
-  const { data: rawHistory, isLoading } = useCmsRevenue(id!, params);
-  const history = (rawHistory ?? []) as RevRow[];
+  const { data: revenueData, isLoading } = useCmsRevenue(id!, params);
+  const history = (revenueData?.items ?? []) as RevRow[];
+  const periodSummary = revenueData?.period_summary ?? null;
 
   const chartData = history.map((r) => ({
     date: fmtDate(r.snapshot_date),
@@ -198,10 +199,17 @@ export default function CmsHistoryPage() {
     watch_time_hours: Number(r.watch_time_hours ?? 0),
   }));
 
-  const totalRevenue      = history.reduce((s, r) => s + Number(r.revenue), 0);
-  const totalViews        = history.reduce((s, r) => s + Number(r.views), 0);
+  const dailyRevenue      = history.reduce((s, r) => s + Number(r.revenue), 0);
+  const dailyViews        = history.reduce((s, r) => s + Number(r.views), 0);
+  const totalRevenue      = periodSummary ? periodSummary.revenue : dailyRevenue;
+  const totalViews        = periodSummary ? periodSummary.views   : dailyViews;
   const totalWatchTime    = history.reduce((s, r) => s + Number(r.watch_time_hours ?? 0), 0);
   const hasAnalytics      = history.some((r) => (r.engaged_views ?? 0) > 0 || (r.watch_time_hours ?? 0) > 0);
+
+  // Số ngày theo period đang chọn (để so với history.length có data thực tế)
+  const periodDays = fromDate && toDate
+    ? Math.max(1, Math.round((new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400_000) + 1)
+    : (period === "lifetime" ? null : Number(period));
 
   return (
     <div style={{ padding: 24 }}>
@@ -212,7 +220,7 @@ export default function CmsHistoryPage() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text }}>Lịch sử doanh thu — {cms?.name}</h1>
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {PERIOD_OPTIONS.map((opt) => (
+          {PERIOD_OPTIONS.filter((opt) => !["180", "this_month", "last_month"].includes(opt.key)).map((opt) => (
             <Button
               key={opt.key}
               size="sm"
@@ -252,7 +260,15 @@ export default function CmsHistoryPage() {
       {/* Summary KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
         <Card padding="16px">
-          <div style={{ fontSize: 11, color: C.textMuted }}>Tổng doanh thu</div>
+          <div style={{ fontSize: 11, color: C.textMuted, display: "flex", alignItems: "center", gap: 6 }}>
+            Tổng doanh thu
+            {periodSummary && (
+              <span title={`Từ YT Studio (cập nhật ${periodSummary.captured_date}, ${periodSummary.channel_count} kênh)`}
+                style={{ fontSize: 10, color: C.green, background: `${C.green}22`, borderRadius: 4, padding: "1px 5px" }}>
+                YT Studio
+              </span>
+            )}
+          </div>
           <div style={{ fontSize: 22, fontWeight: 700, color: C.amber, marginTop: 4 }}>
             {fmtCurrency(totalRevenue, cms?.currency)}
           </div>
@@ -268,8 +284,13 @@ export default function CmsHistoryPage() {
           </Card>
         )}
         <Card padding="16px">
-          <div style={{ fontSize: 11, color: C.textMuted }}>Số ngày</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: C.text, marginTop: 4 }}>{history.length}</div>
+          <div style={{ fontSize: 11, color: C.textMuted }}>Ngày có data</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: C.text, marginTop: 4 }}>
+            {history.length}
+            {periodDays !== null && (
+              <span style={{ fontSize: 13, fontWeight: 400, color: C.textMuted }}> / {periodDays}</span>
+            )}
+          </div>
         </Card>
       </div>
 
@@ -292,7 +313,7 @@ export default function CmsHistoryPage() {
                 tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
               <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: C.textMuted }} tickLine={false}
                 tickFormatter={(v: number) => `${(v/1_000_000).toFixed(1)}M`} />
-              <Tooltip contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+              <Tooltip contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
                 formatter={(value: number, name: string) => {
                   if (name === "Revenue ($)") return [`$${value.toFixed(3)}`, name];
                   return [fmt(value), name];

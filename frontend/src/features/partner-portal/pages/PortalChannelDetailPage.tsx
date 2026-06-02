@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ChevronLeft, Tv2, AlertTriangle, Eye, DollarSign, Users, Building2,
@@ -104,7 +104,7 @@ export default function PortalChannelDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  const [periodKey, setPeriodKey] = useState<PeriodKey>("30");
+  const [periodKey, setPeriodKey] = useState<PeriodKey>("28");
   const [fromDate, setFromDate]   = useState("");
   const [toDate, setToDate]       = useState(todayInputDate());
   const [metric, setMetric]       = useState<Metric>("revenue");
@@ -262,7 +262,7 @@ export default function PortalChannelDetailPage() {
         />
         <Kpi
           icon={<DollarSign size={16} />}
-          label="Doanh thu (tháng)"
+          label={`Doanh thu tháng ${new Date().getMonth() + 1}`}
           value={fmtCurrency(ch.monthly_revenue)}
           color={C.amber}
         />
@@ -342,7 +342,7 @@ export default function PortalChannelDetailPage() {
                 }}
               />
               <Tooltip
-                contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
+                contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
                 labelStyle={{ color: C.text }}
                 itemStyle={{ color: C.text }}
                 formatter={(v: number) => [
