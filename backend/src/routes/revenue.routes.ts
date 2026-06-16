@@ -18,11 +18,18 @@ router.get("/", async (req, res, next) => {
 
 router.get("/breakdown", async (req, res, next) => {
   try {
-    const by = (req.query.by as "cms" | "channel" | "partner" | "topic") ?? "cms";
+    const by = (req.query.by as "cms" | "channel" | "partner" | "topic" | "content_owner") ?? "cms";
     const { from, to } = req.query as { from?: string; to?: string };
     const isLifetime = req.query.period === "lifetime";
     const period = isLifetime ? 0 : Math.min(365, Number(req.query.period) || 30);
-    res.json(await RevenueService.getBreakdown(by, { period, from, to, isLifetime }));
+    const toArr = (v: unknown) => typeof v === "string" && v ? v.split(",").map(s => s.trim()).filter(Boolean) : [];
+    const crossFilters = {
+      cmsIds:       toArr(req.query.crossCmsId),
+      partnerIds:   toArr(req.query.crossPartnerId),
+      topicIds:     toArr(req.query.crossTopicId),
+      contentOwners: toArr(req.query.crossContentOwner),
+    };
+    res.json(await RevenueService.getBreakdown(by, { period, from, to, isLifetime, crossFilters }));
   } catch(e) { next(e); }
 });
 
@@ -35,9 +42,26 @@ router.get("/system-daily", async (req, res, next) => {
   } catch(e) { next(e); }
 });
 
+router.get("/multi-daily", async (req, res, next) => {
+  try {
+    const { from, to } = req.query as Record<string, string>;
+    const isLifetime = req.query.period === "lifetime";
+    const period = isLifetime ? 0 : Math.min(365, Number(req.query.period) || 30);
+    // Accept comma-separated values for multi-select
+    const toArr = (v: unknown) => typeof v === "string" && v ? v.split(",").map(s => s.trim()).filter(Boolean) : [];
+    const filters = {
+      cmsIds:        toArr(req.query.cmsId),
+      partnerIds:    toArr(req.query.partnerId),
+      topicIds:      toArr(req.query.topicId),
+      contentOwners: toArr(req.query.contentOwner),
+    };
+    res.json(await RevenueService.getMultiFilterDaily(filters, { period, from, to, isLifetime }));
+  } catch(e) { next(e); }
+});
+
 router.get("/entity-daily", async (req, res, next) => {
   try {
-    const by = req.query.by as "cms" | "partner" | "topic";
+    const by = req.query.by as "cms" | "partner" | "topic" | "content_owner";
     const id = req.query.id as string;
     if (!by || !id) { res.status(400).json({ error: "by and id required" }); return; }
     const { from, to } = req.query as { from?: string; to?: string };

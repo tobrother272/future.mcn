@@ -25,6 +25,7 @@ import { topicsRouter }       from "./routes/topics.routes.js";
 import { inboxRouter }        from "./routes/inbox.routes.js";
 import { publicRouter }       from "./routes/public.routes.js";
 import { startDailySnapshotJob } from "./jobs/daily-snapshot.job.js";
+import { startSheetsExportJob }  from "./jobs/sheets-export.job.js";
 
 export function createApp() {
   const app = express();
@@ -99,6 +100,7 @@ export function createApp() {
   // ── Start background jobs ─────────────────────────────────
   if (env.NODE_ENV !== "test") {
     startDailySnapshotJob();
+    startSheetsExportJob();
   }
 
   // ── 404 handler ───────────────────────────────────────────

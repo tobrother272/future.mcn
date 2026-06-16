@@ -149,6 +149,7 @@ export interface AnalyticsSummary {
   total_engaged: number;
   total_watch_hours: number;
   total_revenue: number;
+  avg_view_duration?: string | null;
 }
 
 export interface ChannelAnalyticsResponse {
@@ -189,5 +190,13 @@ export function useBulkEditChannels() {
       void qc.invalidateQueries({ queryKey: ["channels"] });
       void qc.invalidateQueries({ queryKey: ["cms"] });
     },
+  });
+}
+
+export function useContentOwners() {
+  return useQuery({
+    queryKey: ["channels", "content-owners"],
+    queryFn: () => apiClient.get("channels/content-owners").json<string[]>(),
+    staleTime: 60_000,
   });
 }

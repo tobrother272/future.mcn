@@ -1,11 +1,12 @@
-﻿import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
 import { ChevronLeft, History, Tv, Upload, CheckCircle, AlertCircle, UserCog, Building2, ArrowRightLeft, Tag, Plus, Server, Trash2, Search, Loader2, ShieldCheck, X } from "lucide-react";
 import { C } from "@/styles/theme";
 import { Button, Pill, Card, Input, EmptyState, StatusDot, Modal, Field } from "@/components/ui";
 import { useCms, useCmsStats, useCmsChannels, useTopics, useCmsList, useCreateTopic, useClearCmsChannels, useDeleteTopic } from "@/api/cms.api";
-import { useBulkImportChannels, useUpdateChannel, useBulkEditChannels, useCreateChannel, useValidateYtChannel, useBulkDeleteChannels } from "@/api/channels.api";
+import { useBulkImportChannels, useUpdateChannel, useBulkEditChannels, useCreateChannel, useValidateYtChannel, useBulkDeleteChannels, useContentOwners } from "@/api/channels.api";
+
 import type { YtValidateResult } from "@/api/channels.api";
 import { usePartnerList } from "@/api/partners.api";
 import { useToast } from "@/stores/notificationStore";
@@ -37,23 +38,27 @@ function parseChannelCSV(text: string, cms_id: string): Array<Record<string, unk
   const lines = text.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return [];
 
-  const headers = splitCSVLine(lines[0] ?? "").map((h) => h.toLowerCase());
+  const headers = splitCSVLine(lines[0] ?? "").map((h) => h.toLowerCase().trim());
 
-  // Detect column indices
-  const idxYtId    = headers.findIndex((h) => h === "channel");
-  const idxName    = headers.findIndex((h) => h === "channel title");
-  const idxViews   = headers.findIndex((h) => h === "views");
-  const idxRevenue = headers.findIndex((h) => h.includes("revenue"));
+  // Support both YouTube Studio English and Vietnamese export formats
+  const idxYtId  = headers.findIndex((h) => h === "kênh" || h === "channel");
+  const idxName  = headers.findIndex((h) => h === "tiêu đề kênh" || h === "channel title");
+  const idxViews = headers.findIndex((h) => h === "số lượt xem" || h === "views");
+  const idxRevenue = headers.findIndex((h) =>
+    h.includes("doanh thu") || h.includes("revenue")
+  );
 
   const rows: Array<Record<string, unknown>> = [];
 
   for (let i = 1; i < lines.length; i++) {
     const cols = splitCSVLine(lines[i] ?? "");
-    const ytId = idxYtId >= 0 ? cols[idxYtId] : "";
-    const name = idxName >= 0 ? cols[idxName] : "";
+    const ytId = idxYtId >= 0 ? cols[idxYtId]?.trim() : "";
+    const name = idxName >= 0 ? cols[idxName]?.trim() : "";
 
     // Skip total/summary rows (no yt_id or empty name)
-    if (!ytId || !name || name.toLowerCase() === "total" || ytId.toLowerCase() === "total") continue;
+    if (!ytId || !name || name.toLowerCase() === "total" || ytId.toLowerCase() === "tổng" || ytId.toLowerCase() === "total") continue;
+    // Skip rows where yt_id doesn't look like a YouTube channel ID (UCxxx)
+    if (!ytId.startsWith("UC")) continue;
 
     const views   = idxViews   >= 0 ? Number(cols[idxViews]?.replace(/[^0-9.]/g, ""))   || 0 : 0;
     const revenue = idxRevenue >= 0 ? Number(cols[idxRevenue]?.replace(/[^0-9.]/g, "")) || 0 : 0;
@@ -438,6 +443,168 @@ function AssignTopicModal({
   );
 }
 
+// ── Assign Code Modal ────────────────────────────────
+function AssignContentOwnerModal({
+  channelIds,
+  cmsId,
+  initialValue,
+  onClose,
+}: {
+  channelIds: string[];
+  cmsId: string;
+  initialValue?: string;
+  onClose: () => void;
+}) {
+  const toast    = useToast();
+  const qc       = useQueryClient();
+  const bulkEdit = useBulkEditChannels();
+  const { data: owners = [], refetch } = useContentOwners();
+
+  const [selectedValue, setSelectedValue] = useState(initialValue ?? "");
+  const [newName, setNewName]             = useState<string | null>(null);
+  const [search, setSearch]               = useState("");
+
+  const isUnassign = selectedValue === "" && !!initialValue;
+  const canConfirm = selectedValue !== "" || isUnassign;
+
+  const handleSave = async () => {
+    if (!canConfirm) return;
+    try {
+      const res = await bulkEdit.mutateAsync({
+        ids: channelIds,
+        updates: { content_owner: selectedValue || null },
+      });
+      await qc.invalidateQueries({ queryKey: ["cms", cmsId, "channels"] });
+      await qc.invalidateQueries({ queryKey: ["channels", "content-owners"] });
+      toast.success(
+        "Đã cập nhật Code",
+        selectedValue ? `${res.count} kênh → "${selectedValue}"` : `Đã xoá Code cho ${res.count} kênh`
+      );
+      onClose();
+    } catch (err) {
+      toast.error("Lỗi", err instanceof Error ? err.message : "");
+    }
+  };
+
+  const filtered = owners.filter((o) =>
+    !search || o.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <Modal open onClose={onClose}
+      title={`Gán Code cho ${channelIds.length} kênh`}
+      width={460}
+      footer={
+        <>
+          <Button variant="ghost" size="sm" onClick={onClose}>Hủy</Button>
+          <Button variant="primary" size="sm" icon={isUnassign ? <X size={13} /> : <ShieldCheck size={13} />}
+            loading={bulkEdit.isPending} disabled={!canConfirm}
+            onClick={() => void handleSave()}>
+            {isUnassign ? "Bỏ Code" : "Gán Code"}
+          </Button>
+        </>
+      }
+    >
+      {/* Search */}
+      <div style={{ position: "relative", marginBottom: 12 }}>
+        <Search size={13} color={C.textMuted} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Tìm Code..."
+          style={{
+            width: "100%", paddingLeft: 32, paddingRight: 10, paddingTop: 8, paddingBottom: 8,
+            background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: 8,
+            color: C.text, fontSize: 12, outline: "none", boxSizing: "border-box",
+          }}
+        />
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 8 }}>
+        CHỌN CONTENT OWNER ({owners.length})
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
+        {/* Tạo mới */}
+        {newName === null ? (
+          !search && (
+            <button
+              onClick={() => setNewName("")}
+              style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "9px 12px",
+                borderRadius: 8, border: `1px solid ${C.border}`, background: C.bgCard,
+                cursor: "pointer", color: C.textMuted, transition: "all 0.1s", width: "100%", textAlign: "left",
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = C.amber; (e.currentTarget as HTMLButtonElement).style.color = C.amber; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = C.border; (e.currentTarget as HTMLButtonElement).style.color = C.textMuted; }}
+            >
+              <div style={{ width: 24, height: 24, borderRadius: 6, background: `${C.amber}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Plus size={11} color={C.amber} />
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 500 }}>Thêm Code mới...</span>
+            </button>
+          )
+        ) : (
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              autoFocus
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newName.trim()) {
+                  setSelectedValue(newName.trim());
+                  setNewName(null);
+                  void refetch();
+                }
+                if (e.key === "Escape") setNewName(null);
+              }}
+                            placeholder="Tên Code mới..."
+              style={{
+                flex: 1, padding: "7px 10px", background: C.bgInput,
+                border: `1px solid ${C.amber}`, borderRadius: 8,
+                color: C.text, fontSize: 12, outline: "none",
+              }}
+            />
+            <Button size="sm" variant="primary"
+              disabled={!newName.trim()}
+              onClick={() => { if (newName.trim()) { setSelectedValue(newName.trim()); setNewName(null); void refetch(); } }}>
+              Thêm
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setNewName(null)}>✕</Button>
+          </div>
+        )}
+
+        {/* Danh sách */}
+        {filtered.map((owner) => (
+          <label key={owner} style={{
+            display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
+            borderRadius: 8, border: `1px solid ${selectedValue === owner ? C.amber : C.border}`,
+            background: selectedValue === owner ? `${C.amber}10` : C.bgCard,
+            cursor: "pointer", transition: "all 0.1s",
+          }}>
+            <input type="radio" name="content-owner" value={owner}
+              checked={selectedValue === owner}
+              onChange={() => setSelectedValue(owner)}
+              onClick={() => { if (selectedValue === owner) setSelectedValue(""); }}
+              style={{ accentColor: C.amber }} />
+            <div style={{ width: 24, height: 24, borderRadius: 6, background: `${C.amber}20`,
+              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <ShieldCheck size={11} color={C.amber} />
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 500, color: C.text }}>{owner}</span>
+          </label>
+        ))}
+
+        {filtered.length === 0 && !newName && (
+          <div style={{ fontSize: 13, color: C.textMuted, textAlign: "center", padding: "16px 0" }}>
+            {search ? "Không tìm thấy Code" : "Chưa có Code nào"}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // ── Import Modal ─────────────────────────────────────────────
 function ImportChannelModal({ open, onClose, cmsId }: { open: boolean; onClose: () => void; cmsId: string }) {
   const toast = useToast();
@@ -499,19 +666,33 @@ function ImportChannelModal({ open, onClose, cmsId }: { open: boolean; onClose: 
         {/* File picker */}
         <div
           onClick={() => fileRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = C.blue; e.currentTarget.style.background = `${C.blue}10`; }}
+          onDragLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = "transparent"; }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.currentTarget.style.borderColor = C.border;
+            e.currentTarget.style.background = "transparent";
+            const file = e.dataTransfer.files[0];
+            if (!file) return;
+            setFileName(file.name);
+            setResult(null);
+            const reader = new FileReader();
+            reader.onload = (ev) => setRows(parseChannelCSV(ev.target?.result as string, cmsId));
+            reader.readAsText(file, "utf-8");
+          }}
           style={{
             border: `2px dashed ${C.border}`, borderRadius: 10, padding: "24px 16px",
-            textAlign: "center", cursor: "pointer", transition: "border-color 0.15s",
+            textAlign: "center", cursor: "pointer", transition: "all 0.15s",
           }}
           onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.blue)}
           onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.border)}
         >
           <Upload size={24} color={C.textMuted} style={{ margin: "0 auto 8px" }} />
           <div style={{ fontSize: 13, color: C.textSub }}>
-            {fileName ? <strong style={{ color: C.text }}>{fileName}</strong> : "Click để chọn file CSV"}
+            {fileName ? <strong style={{ color: C.text }}>{fileName}</strong> : "Kéo thả hoặc click để chọn Table data.csv"}
           </div>
           <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
-            Hỗ trợ: Tên kênh, ID kênh, Trạng thái, Kiếm tiền, Subscriber, View, Doanh thu
+            Export từ YouTube Studio Analytics → "Table data.csv"
           </div>
           <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleFile} />
         </div>
@@ -743,7 +924,8 @@ export default function CmsDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
-  const [topicFilter, setTopicFilter]   = useState("");
+  const [topicFilter, setTopicFilter]         = useState("");
+  const [contentOwnerFilter, setContentOwnerFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [monoFilter, setMonoFilter]     = useState("");
   const [minRevenue, setMinRevenue]     = useState("");
@@ -757,7 +939,8 @@ export default function CmsDetailPage() {
   const [showAssignPartner, setShowAssignPartner] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showTransferCms, setShowTransferCms] = useState(false);
-  const [showAssignTopic, setShowAssignTopic] = useState(false);
+  const [showAssignTopic,  setShowAssignTopic]  = useState(false);
+  const [showAssignOwner,  setShowAssignOwner]  = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showDeleteSelectedConfirm, setShowDeleteSelectedConfirm] = useState(false);
 
@@ -772,7 +955,8 @@ export default function CmsDetailPage() {
   const { data: stats } = useCmsStats(id!);
   const { data: channelsData } = useCmsChannels(id!, {
     ...(search      ? { search }                        : {}),
-    ...(topicFilter ? { topic_id: topicFilter }         : {}),
+    ...(topicFilter        ? { topic_id: topicFilter }               : {}),
+    ...(contentOwnerFilter ? { content_owner: contentOwnerFilter }   : {}),
     ...(statusFilter? { status: statusFilter }          : {}),
     ...(monoFilter  ? { monetization: monoFilter }      : {}),
     ...(minRevenue  ? { min_revenue: Number(minRevenue)}: {}),
@@ -784,6 +968,7 @@ export default function CmsDetailPage() {
     limit: 100,
   });
   const { data: topics } = useTopics();
+  const { data: contentOwnersList = [] } = useContentOwners();
 
   if (isLoading) return <div style={{ padding: 24, color: C.textSub }}>Đang tải...</div>;
   if (!cms) return <div style={{ padding: 24, color: C.red }}>CMS không tồn tại</div>;
@@ -898,6 +1083,19 @@ export default function CmsDetailPage() {
             return allSame ? firstTopic : undefined;
           })()}
           onClose={() => { setShowAssignTopic(false); setSelectedIds(new Set()); }}
+        />
+      )}
+      {showAssignOwner && (
+        <AssignContentOwnerModal
+          channelIds={[...selectedIds]}
+          cmsId={id!}
+          initialValue={(() => {
+            const ids = [...selectedIds];
+            const first = channels.find((c) => c.id === ids[0])?.content_owner ?? "";
+            const allSame = ids.every((sid) => (channels.find((c) => c.id === sid)?.content_owner ?? "") === first);
+            return allSame ? first : "";
+          })()}
+          onClose={() => { setShowAssignOwner(false); setSelectedIds(new Set()); }}
         />
       )}
 
@@ -1126,9 +1324,19 @@ export default function CmsDetailPage() {
           ))}
         </select>
 
+        {/* Content Owner */}
+        <select value={contentOwnerFilter} onChange={(e) => { setContentOwnerFilter(e.target.value); setSelectedIds(new Set()); }}
+          style={{ height: 32, padding: "0 8px", borderRadius: 8, fontSize: 12, cursor: "pointer",
+            border: `1px solid ${contentOwnerFilter ? C.amber : C.border}`, background: C.bgCard, color: contentOwnerFilter ? C.amber : C.textSub, outline: "none" }}>
+          <option value="">Tất cả Code</option>
+          {contentOwnersList.map((o) => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+        </select>
+
         {/* Reset */}
-        {(search || minRevenue || maxRevenue || minLastRevenue || maxLastRevenue || minViews || maxViews || statusFilter || monoFilter || topicFilter) && (
-          <button onClick={() => { setSearch(""); setMinRevenue(""); setMaxRevenue(""); setMinLastRevenue(""); setMaxLastRevenue(""); setMinViews(""); setMaxViews(""); setStatusFilter(""); setMonoFilter(""); setTopicFilter(""); setSelectedIds(new Set()); }}
+        {(search || minRevenue || maxRevenue || minLastRevenue || maxLastRevenue || minViews || maxViews || statusFilter || monoFilter || topicFilter || contentOwnerFilter) && (
+          <button onClick={() => { setSearch(""); setMinRevenue(""); setMaxRevenue(""); setMinLastRevenue(""); setMaxLastRevenue(""); setMinViews(""); setMaxViews(""); setStatusFilter(""); setMonoFilter(""); setTopicFilter(""); setContentOwnerFilter(""); setSelectedIds(new Set()); }}
             style={{ height: 32, padding: "0 12px", borderRadius: 8, fontSize: 12, cursor: "pointer",
               border: `1px solid ${C.border}`, background: C.bgCard, color: C.red, flexShrink: 0 }}>
             Xóa bộ lọc
@@ -1199,6 +1407,17 @@ export default function CmsDetailPage() {
               >
                 Gán partner{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
               </Button>
+              {/* Gán Content Owner */}
+              <Button
+                variant={selectedIds.size > 0 ? "secondary" : "ghost"}
+                size="sm"
+                icon={<ShieldCheck size={14} />}
+                disabled={selectedIds.size === 0}
+                onClick={() => setShowAssignOwner(true)}
+                style={{ color: selectedIds.size > 0 ? C.amber : undefined, borderColor: selectedIds.size > 0 ? C.amber : undefined }}
+              >
+                Code{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
+              </Button>
               {/* Chuyển CMS */}
               <Button
                 variant={selectedIds.size > 0 ? "primary" : "ghost"}
@@ -1231,7 +1450,7 @@ export default function CmsDetailPage() {
                         style={{ accentColor: C.blue, cursor: "pointer" }}
                       />
                     </th>
-                    {(["Channel", "Topic", "Partner", "Status", "Monetization", "Link Date", "Copyright", "Video", "Total Views", "Subscribers", "28 Day Revenue", "Last Day Revenue", ""] as const).map((h) => (
+                    {(["Channel", "Topic", "Partner", "Code", "Status", "Monetization", "Link Date", "Copyright", "Video", "Total Views", "Subscribers", "28 Day Revenue", "Last Day Revenue", ""] as const).map((h) => (
                       <th key={h} style={{
                         padding: h === "Copyright" ? "10px 8px" : "10px 16px",
                         width: h === "Copyright" ? 70 : undefined,
@@ -1284,8 +1503,10 @@ export default function CmsDetailPage() {
                           )}
                         </div>
                         {ch.yt_id && <div style={{ fontSize: 11, color: C.textMuted }}>{ch.yt_id}</div>}
-                        {ch.is_unlinked && ch.unlink_reason && (
-                          <div style={{ fontSize: 11, color: C.textMuted }}>{ch.unlink_reason}</div>
+                        {ch.is_unlinked && (
+                          <div style={{ fontSize: 11, color: C.textMuted }}>
+                            {`CMS ${cms.name} - Unlink ngày ${ch.unlinked_at ? new Date(ch.unlinked_at).toLocaleDateString("vi-VN") : "—"}`}
+                          </div>
                         )}
                       </td>
                       <td style={{ padding: "10px 16px" }}>
@@ -1302,6 +1523,19 @@ export default function CmsDetailPage() {
                         )}
                       </td>
                       <td style={{ padding: "10px 16px", color: C.textSub }}>{ch.partner_name ?? "—"}</td>
+                      <td style={{ padding: "10px 16px" }}>
+                        {ch.content_owner ? (
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                            fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 5,
+                            background: `${C.amber}18`, color: C.amber,
+                          }}>
+                            <ShieldCheck size={10} />{ch.content_owner}
+                          </span>
+                        ) : (
+                          <span style={{ color: C.textMuted, fontSize: 12 }}>—</span>
+                        )}
+                      </td>
                       <td style={{ padding: "10px 16px" }}><StatusDot status={ch.status} /></td>
                       <td style={{ padding: "10px 16px" }}><StatusDot status={ch.monetization} /></td>
                       <td style={{ padding: "10px 16px", color: C.textMuted, fontSize: 12, whiteSpace: "nowrap" }}>
@@ -1338,13 +1572,6 @@ export default function CmsDetailPage() {
                           >
                             —
                           </span>
-                        )}
-                      </td>
-                      <td style={{ padding: "10px 16px" }}>
-                        {ch.partner_name ? (
-                          <span style={{ fontSize: 12, color: C.blue, fontWeight: 600 }}>{ch.partner_name}</span>
-                        ) : (
-                          <span style={{ fontSize: 12, color: C.textMuted }}>—</span>
                         )}
                       </td>
                     </tr>

@@ -26,7 +26,7 @@ const PARTNER_USER_COLS = `
 `;
 
 export const PartnerService = {
-  async list(filters: { type?: string; tier?: string; status?: string; search?: string; page?: number; limit?: number }) {
+  async list(filters: { type?: string; tier?: string; status?: string; search?: string; cms_id?: string; page?: number; limit?: number }) {
     const andClauses: string[] = [];
     const vals: unknown[] = [];
     let idx = 1;
@@ -34,6 +34,7 @@ export const PartnerService = {
     if (filters.tier)   { andClauses.push(`p.tier=$${idx++}`);       vals.push(filters.tier); }
     if (filters.status) { andClauses.push(`p.status=$${idx++}`);     vals.push(filters.status); }
     if (filters.search) { andClauses.push(`p.name ILIKE $${idx++}`); vals.push(`%${filters.search}%`); }
+    if (filters.cms_id) { andClauses.push(`EXISTS (SELECT 1 FROM channel c WHERE c.partner_id = p.id AND c.cms_id = $${idx++})`); vals.push(filters.cms_id); }
 
     const where = andClauses.length ? `WHERE ${andClauses.join(" AND ")}` : "";
     const pageLimit = Math.min(500, filters.limit ?? 50);

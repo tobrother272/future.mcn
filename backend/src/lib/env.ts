@@ -10,6 +10,10 @@ const envSchema = z.object({
   LOG_LEVEL:     z.enum(["trace","debug","info","warn","error","fatal"]).default("info"),
   // Legacy: Meridian API token (kept for backward compat during migration)
   MERIDIAN_API_TOKEN: z.string().optional(),
+  // Google Sheets export
+  GOOGLE_SERVICE_ACCOUNT_EMAIL: z.string().optional(),
+  GOOGLE_PRIVATE_KEY:           z.string().optional(),
+  GOOGLE_SHEET_ID:              z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -86,8 +86,7 @@ router.get("/:id/revenue", async (req, res, next) => {
            COUNT(cap.channel_id)::text             AS channel_count,
            MAX(cap.captured_date)::text            AS captured_date
          FROM channel_analytics_period cap
-         JOIN channel c ON c.id = cap.channel_id
-         WHERE c.cms_id = $1 AND cap.period = $2`,
+         WHERE cap.cms_id = $1 AND cap.period = $2`,
         [req.params.id, periodKey]
       );
       if (ps && Number(ps.revenue) > 0) {
@@ -106,17 +105,19 @@ router.get("/:id/revenue", async (req, res, next) => {
 
 router.post("/:id/revenue/import", async (req, res, next) => {
   try {
-    const rows = req.body as Array<{ snapshot_date: string; revenue: number; views?: number }>;
+    const rows = req.body as Array<{ snapshot_date: string; revenue: number; views?: number; watch_time_hours?: number; engaged_views?: number }>;
     if (!Array.isArray(rows) || !rows.length) {
       res.status(400).json({ error: "Body phải là mảng rows" }); return;
     }
     const mapped = rows.map((r) => ({
-      scope:         "cms",
-      scope_id:      req.params.id,
-      snapshot_date: r.snapshot_date,
-      revenue:       Number(r.revenue) || 0,
-      views:         Number(r.views)   || 0,
-      source:        "csv_import",
+      scope:             "cms",
+      scope_id:          req.params.id,
+      snapshot_date:     r.snapshot_date,
+      revenue:           Number(r.revenue)         || 0,
+      views:             Number(r.views)            || 0,
+      watch_time_hours:  Number(r.watch_time_hours) || 0,
+      engaged_views:     Number(r.engaged_views)    || 0,
+      source:            "csv_import",
     }));
     res.json(await RevenueService.bulkImport(mapped));
   } catch(e) { next(e); }
@@ -130,7 +131,8 @@ router.get("/:id/channels", async (req, res, next) => {
       status:       req.query.status        as string | undefined,
       monetization: req.query.monetization  as string | undefined,
       search:       req.query.search        as string | undefined,
-      topic_id:     req.query.topic_id      as string | undefined,
+      topic_id:      req.query.topic_id      as string | undefined,
+      content_owner: req.query.content_owner as string | undefined,
       min_views:    req.query.min_views     ? Number(req.query.min_views)   : undefined,
       max_views:    req.query.max_views     ? Number(req.query.max_views)   : undefined,
       min_revenue:  req.query.min_revenue   ? Number(req.query.min_revenue) : undefined,

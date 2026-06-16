@@ -174,9 +174,9 @@ const syncBodySchema = z.object({
  */
 async function upsertChannel(cms_id: string, row: z.infer<typeof channelItemSchema>) {
   const id = nanoid("CH");
-  const result = await queryOne<{ id: string; was_insert: boolean; old_mono: string | null; new_mono: string }>(
+  const result = await queryOne<{ id: string; was_insert: boolean; old_mono: string | null; new_mono: string; old_cms_id: string | null }>(
     `WITH old_val AS (
-       SELECT monetization FROM channel WHERE yt_id = $3
+       SELECT monetization, cms_id AS old_cms_id FROM channel WHERE yt_id = $3
      ),
      upserted AS (
        INSERT INTO channel (
@@ -207,7 +207,7 @@ async function upsertChannel(cms_id: string, row: z.infer<typeof channelItemSche
          updated_at      = NOW()
        RETURNING id, (xmax = 0) AS was_insert, monetization AS new_mono
      )
-     SELECT u.id, u.was_insert, u.new_mono, o.monetization AS old_mono
+     SELECT u.id, u.was_insert, u.new_mono, o.monetization AS old_mono, o.old_cms_id
      FROM upserted u
      LEFT JOIN old_val o ON true`,
     [
@@ -219,6 +219,35 @@ async function upsertChannel(cms_id: string, row: z.infer<typeof channelItemSche
   );
   if (!result) throw new Error("upsert returned no row");
   return result;
+}
+
+/**
+ * Write / maintain channel_cms_history record for a channel's ownership period.
+ *
+ * - New channel (was_insert=true): open a record with from_date = link_date.
+ * - Channel moved to a new CMS: close the previous CMS record and open a new one.
+ *   to_date of old record = from_date - 1 day (last day the old CMS owned it).
+ */
+async function writeCmsHistory(channel_id: string, cms_id: string, from_date: string, prev_cms_id?: string | null) {
+  // Close previous CMS ownership period when channel moves to a new CMS
+  if (prev_cms_id && prev_cms_id !== cms_id) {
+    await query(
+      `UPDATE channel_cms_history
+          SET to_date    = $1::date - INTERVAL '1 day',
+              updated_at = NOW()
+        WHERE channel_id = $2
+          AND cms_id     = $3
+          AND to_date IS NULL`,
+      [from_date, channel_id, prev_cms_id],
+    );
+  }
+  // Open (or no-op if already exists) ownership record for the new/current CMS
+  await query(
+    `INSERT INTO channel_cms_history (id, channel_id, cms_id, from_date)
+     VALUES ($1, $2, $3, $4::date)
+     ON CONFLICT (channel_id, cms_id, from_date) DO NOTHING`,
+    [nanoid("CCH"), channel_id, cms_id, from_date],
+  );
 }
 
 /**
@@ -288,8 +317,30 @@ async function reconcileMissing(sync_id: string, cms_id: string) {
   );
   // Cleanup the scratch table for this sync_id.
   await query(`DELETE FROM cms_sync_run WHERE sync_id = $1`, [sync_id]);
+
+  const terminatedCount = Number(result?.terminated ?? 0);
+
+  // Close CMS history for all channels that were just unlinked in this reconcile.
+  // to_date = today (last day they were still owned by this CMS).
+  if (terminatedCount > 0) {
+    await query(
+      `UPDATE channel_cms_history
+          SET to_date    = CURRENT_DATE,
+              updated_at = NOW()
+        WHERE cms_id     = $1
+          AND to_date IS NULL
+          AND channel_id IN (
+            SELECT id FROM channel
+             WHERE cms_id     = $1
+               AND is_unlinked = true
+               AND unlinked_at >= NOW() - INTERVAL '5 minutes'
+          )`,
+      [cms_id],
+    );
+  }
+
   return {
-    terminated: Number(result?.terminated ?? 0),
+    terminated: terminatedCount,
     sample: (result?.names ?? []).slice(0, 10),
   };
 }
@@ -391,10 +442,20 @@ router.post("/channels/sync", async (req, res, next) => {
     let inserted = 0, updated = 0;
     const ytIds: string[] = [];
     const monoChanges: { id: string; name: string; yt_id: string; from: string; to: string }[] = [];
+    const today = new Date().toISOString().slice(0, 10);
     for (const item of parsed.data.items) {
       const r = await upsertChannel(cms_id, item);
       if (r.was_insert) inserted++; else updated++;
       ytIds.push(item.yt_id);
+
+      // Write CMS ownership history:
+      // - new channel → open record from link_date (or today as fallback)
+      // - existing channel that moved CMS → close old record, open new
+      const fromDate = item.link_date ?? today;
+      if (r.was_insert || (r.old_cms_id && r.old_cms_id !== cms_id)) {
+        await writeCmsHistory(r.id, cms_id, fromDate, r.old_cms_id);
+      }
+
       // Detect monetization change (only for existing channels, not new inserts)
       if (!r.was_insert && r.old_mono && r.old_mono !== r.new_mono) {
         const ch = await queryOne<{ name: string }>(`SELECT name FROM channel WHERE id = $1`, [r.id]);
@@ -530,13 +591,26 @@ router.post("/analytics/sync/:yt_id", async (req, res, next) => {
     }
 
     // Resolve channel by yt_id scoped to this CMS
-    const ch = await queryOne<{ id: string }>(
-      `SELECT id FROM channel WHERE yt_id = $1 AND cms_id = $2 LIMIT 1`,
+    const ch = await queryOne<{ id: string; name: string; monetization: string; link_date: string | null }>(
+      `SELECT id, name, monetization, link_date FROM channel WHERE yt_id = $1 AND cms_id = $2 LIMIT 1`,
       [yt_id, cms_id],
     );
     if (!ch) throw new NotFoundError(`Channel yt_id="${yt_id}" not found in CMS ${cms_id}`);
 
-    for (const item of parsed.data.items) {
+    // Only accept analytics for dates >= link_date to prevent a new CMS from
+    // inserting historical rows that belong to a previous CMS's ownership period.
+    // Normalise link_date to "YYYY-MM-DD" string (postgres DATE may arrive as a Date object).
+    const linkDateStr = ch.link_date
+      ? (((ch.link_date as unknown) instanceof Date)
+          ? (ch.link_date as unknown as Date).toISOString().slice(0, 10)
+          : String(ch.link_date).slice(0, 10))
+      : null;
+    const validItems = linkDateStr
+      ? parsed.data.items.filter((item) => item.date >= linkDateStr)
+      : parsed.data.items;
+    const skipped = parsed.data.items.length - validItems.length;
+
+    for (const item of validItems) {
       const id = `CA_${ch.id}_${item.date}`.replace(/[^A-Za-z0-9_-]/g, "_");
       await query(
         `INSERT INTO channel_analytics
@@ -557,6 +631,32 @@ router.post("/analytics/sync/:yt_id", async (req, res, next) => {
           item.revenue,
         ],
       );
+    }
+
+    // ── Demonetization detection via analytics ────────────────────────────────
+    // If the most recent date in this batch has revenue = 0 AND the channel is
+    // currently monetized → flip to Off and create an inbox alert.
+    if (validItems.length > 0 && ch.monetization === "On") {
+      const latestItem = validItems.reduce((a, b) => (a.date > b.date ? a : b));
+      if (latestItem.revenue === 0) {
+        await query(
+          `UPDATE channel SET monetization = 'Off', updated_at = NOW() WHERE id = $1`,
+          [ch.id],
+        );
+        await query(
+          `INSERT INTO inbox (id, type, title, body, cms_id)
+           VALUES ($1, 'monetization_change', $2, $3::jsonb, $4)`,
+          [
+            nanoid("INB"),
+            `Tắt kiếm tiền phát hiện qua analytics: ${ch.name}`,
+            JSON.stringify({
+              turned_off: [{ id: ch.id, name: ch.name, yt_id, from: "On", to: "Off", detected_date: latestItem.date }],
+              turned_on: [],
+            }),
+            cms_id,
+          ],
+        );
+      }
     }
 
     // Upsert period summaries (90/365-day pre-aggregated totals from YouTube Studio).
@@ -622,7 +722,8 @@ router.post("/analytics/sync/:yt_id", async (req, res, next) => {
       cms_id,
       yt_id,
       channel_id: ch.id,
-      upserted: parsed.data.items.length,
+      upserted: validItems.length,
+      skipped_before_link_date: skipped,
       last_revenue: updated?.last_revenue ?? 0,
     });
   } catch (e) { next(e); }

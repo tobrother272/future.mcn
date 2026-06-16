@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -120,7 +120,12 @@ function ViolationRow({ v, onClick }: { v: ReturnType<typeof useViolationList>["
 }
 
 // ── Top channel row ─────────────────────────────────────────────
-function TopChannelRow({ channel, onClick }: { channel: Channel; onClick: () => void }) {
+function TopChannelRow({ channel, revenueField = "monthly_revenue", onClick }: {
+  channel: Channel;
+  revenueField?: "monthly_revenue" | "last_revenue";
+  onClick: () => void;
+}) {
+  const revenue = revenueField === "last_revenue" ? channel.last_revenue : channel.monthly_revenue;
   return (
     <tr onClick={onClick} style={{ borderBottom: `1px solid ${C.border}`, cursor: "pointer" }}
       onMouseEnter={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = C.bgHover)}
@@ -138,14 +143,10 @@ function TopChannelRow({ channel, onClick }: { channel: Channel; onClick: () => 
           </div>
         </div>
       </td>
-      <td style={{ padding: "11px 16px", color: C.textSub }}>
-        {channel.cms_name ?? "—"}
-      </td>
-      <td style={{ padding: "11px 16px", color: C.textMuted }}>
-        {channel.partner_name ?? "—"}
-      </td>
+      <td style={{ padding: "11px 16px", color: C.textSub }}>{channel.cms_name ?? "—"}</td>
+      <td style={{ padding: "11px 16px", color: C.textMuted }}>{channel.partner_name ?? "—"}</td>
       <td style={{ padding: "11px 16px", textAlign: "right" }}>
-        <span style={{ fontSize: 13, color: C.amber, fontWeight: 700 }}>{fmtCurrency(channel.monthly_revenue)}</span>
+        <span style={{ fontSize: 13, color: C.amber, fontWeight: 700 }}>{fmtCurrency(revenue)}</span>
       </td>
       <td style={{ padding: "11px 16px" }}>
         <Pill color={channel.monetization === "On" ? "green" : "red"}>{channel.monetization}</Pill>
@@ -183,19 +184,26 @@ export default function DashboardPage() {
   const navigate  = useNavigate();
   const toast     = useToast();
   const snapshot  = useSnapshotAll();
-  const [revenueView, setRevenueView] = useState<"cms" | "partner" | "topic">("cms");
+  const [revenueView, setRevenueView] = useState<"cms" | "partner" | "topic" | "content_owner">("cms");
+  const [topPeriod, setTopPeriod]       = useState<"monthly_revenue" | "last_revenue">("monthly_revenue");
+  const [topCmsFilter, setTopCmsFilter]         = useState("");
+  const [topPartnerFilter, setTopPartnerFilter] = useState("");
 
   const { data: cmsData, refetch: refetchCms }    = useCmsList();
   const { data: allChannelsData } = useChannelList({ page: 1, limit: 1 });
   const { data: monetizedChannelsData } = useChannelList({ page: 1, limit: 1, monetization: "On" });
   const { data: topChannelsData, isLoading: topChannelsLoading } = useChannelList({
-    page: 1, limit: 10, sortBy: "monthly_revenue", sortDir: "desc",
+    page: 1, limit: 10, sortBy: topPeriod, sortDir: "desc",
+    ...(topCmsFilter     ? { cms_id:     topCmsFilter     } : {}),
+    ...(topPartnerFilter ? { partner_id: topPartnerFilter } : {}),
   });
   const { data: partnersData }  = usePartnerList({ limit: 1 });
+  const { data: allPartnersData } = usePartnerList({ limit: 500 });
   const { data: violationsData } = useViolationList({ limit: 6, result: "" });
-  const { data: breakdownCms } = useRevenueBreakdown("cms", 28);
-  const { data: breakdownPartner } = useRevenueBreakdown("partner", 28);
-  const { data: breakdownTopic } = useRevenueBreakdown("topic", 28);
+  const { data: breakdownCms }          = useRevenueBreakdown("cms",           28);
+  const { data: breakdownPartner }      = useRevenueBreakdown("partner",       28);
+  const { data: breakdownTopic }        = useRevenueBreakdown("topic",         28);
+  const { data: breakdownContentOwner } = useRevenueBreakdown("content_owner", 28);
   const { data: systemDaily }   = useRevenueSystemDaily(28);
   const { data: submissions }   = useSubmissionList({ limit: 50 });
 
@@ -223,7 +231,7 @@ export default function DashboardPage() {
     revenue: Number(r.revenue ?? 0),
   }));
   type BreakdownRow = { name: string; revenue: number };
-  const breakdownRowsRaw = (revenueView === "cms" ? breakdownCms : revenueView === "partner" ? breakdownPartner : breakdownTopic) as BreakdownRow[] | undefined;
+  const breakdownRowsRaw = (revenueView === "cms" ? breakdownCms : revenueView === "partner" ? breakdownPartner : revenueView === "topic" ? breakdownTopic : breakdownContentOwner) as BreakdownRow[] | undefined;
   const mergedByName = new Map<string, number>();
   (breakdownRowsRaw ?? []).forEach((r) => {
     const key = r.name ?? "—";
@@ -339,7 +347,8 @@ export default function DashboardPage() {
                 <YAxis tick={{ fontSize: 10, fill: C.textMuted }} tickLine={false} axisLine={false}
                   tickFormatter={(v: number) => v >= 1000 ? `$${(v/1000).toFixed(0)}K` : `$${v}`} />
                 <Tooltip
-                  contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
+                  contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: '#fff' }}
+                  itemStyle={{ color: '#fff' }}
                   formatter={(v: number) => [fmtCurrency(v), "Revenue"]}
                 />
                 <Line type="monotone" dataKey="revenue" stroke={C.amber} strokeWidth={2.5} dot={false} name="Revenue" />
@@ -359,7 +368,7 @@ export default function DashboardPage() {
               title={revenueView === "cms" ? "Hiệu suất doanh thu theo net" : revenueView === "partner" ? "Hiệu suất doanh thu theo đối tác" : "Hiệu suất doanh thu theo topic"}
               action={<Button variant="ghost" size="sm" icon={<ArrowRight size={12} />} onClick={() => navigate("/revenue")}>Chi tiết</Button>}
             />
-            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
               <Button
                 size="sm"
                 variant={revenueView === "cms" ? "primary" : "secondary"}
@@ -380,6 +389,13 @@ export default function DashboardPage() {
                 onClick={() => setRevenueView("topic")}
               >
                 Theo topic
+              </Button>
+              <Button
+                size="sm"
+                variant={revenueView === "content_owner" ? "primary" : "secondary"}
+                onClick={() => setRevenueView("content_owner")}
+              >
+                Theo Code
               </Button>
             </div>
           </div>
@@ -406,9 +422,9 @@ export default function DashboardPage() {
                     ))}
                   </Pie>
                   <Tooltip
-                    contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
-                    labelStyle={{ color: C.text }}
-                    itemStyle={{ color: C.text }}
+                    contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: '#fff' }}
+                    labelStyle={{ color: '#fff' }}
+                    itemStyle={{ color: '#fff' }}
                     formatter={(v: number, _name: string, item: { payload?: { name?: string } }) => [
                       fmtCurrency(v),
                       item?.payload?.name ?? "CMS",
@@ -440,11 +456,47 @@ export default function DashboardPage() {
 
         {/* Top channels by revenue table */}
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.md, overflow: "hidden", boxShadow: SHADOW.sm }}>
-          <div style={{ padding: "16px 16px 0" }}>
+          <div style={{ padding: "16px 16px 10px" }}>
             <SectionHeader
               title="Top 10 channel doanh thu cao nhất"
               action={<Button variant="ghost" size="sm" icon={<ArrowRight size={12} />} onClick={() => navigate("/channels")}>Quản lý</Button>}
             />
+            {/* Filters */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+              {/* Period toggle */}
+              <div style={{ display: "flex", borderRadius: 8, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+                {([["monthly_revenue","28 ngày"],["last_revenue","Hôm qua"]] as const).map(([key, label]) => (
+                  <button key={key} onClick={() => setTopPeriod(key)}
+                    style={{ padding: "4px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer", border: "none",
+                      background: topPeriod === key ? C.amber : "transparent",
+                      color: topPeriod === key ? "#000" : C.textMuted,
+                      transition: "all 0.1s",
+                    }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {/* CMS filter */}
+              <select value={topCmsFilter} onChange={(e) => setTopCmsFilter(e.target.value)}
+                style={{ height: 26, borderRadius: 8, border: `1px solid ${topCmsFilter ? C.amber : C.border}`, background: C.bgCard, color: topCmsFilter ? C.amber : C.text, padding: "0 8px", fontSize: 11, cursor: "pointer" }}>
+                <option value="">Tất cả CMS</option>
+                {cmsList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {/* Partner filter */}
+              <select value={topPartnerFilter} onChange={(e) => setTopPartnerFilter(e.target.value)}
+                style={{ height: 26, borderRadius: 8, border: `1px solid ${topPartnerFilter ? C.blue : C.border}`, background: C.bgCard, color: topPartnerFilter ? C.blue : C.text, padding: "0 8px", fontSize: 11, cursor: "pointer" }}>
+                <option value="">Tất cả đối tác</option>
+                {(allPartnersData?.items ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              {(topCmsFilter || topPartnerFilter) && (
+                <button onClick={() => { setTopCmsFilter(""); setTopPartnerFilter(""); }}
+                  style={{ height: 26, padding: "0 8px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.textMuted, fontSize: 11, cursor: "pointer" }}>
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
           {topChannelsLoading ? (
             <div style={{ padding: 20, color: C.textMuted, fontSize: 13 }}>Đang tải...</div>
@@ -452,8 +504,8 @@ export default function DashboardPage() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ background: C.bg }}>
-                  {["Channel", "CMS", "Đối tác", "Doanh thu", "Monetize", "Status"].map((h) => (
-                    <th key={h} style={{ padding: "8px 16px", textAlign: h === "Doanh thu" ? "right" : "left", fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: ".05em" }}>
+                  {["Channel", "CMS", "Đối tác", topPeriod === "last_revenue" ? "Hôm qua" : "28 ngày", "Monetize", "Status"].map((h) => (
+                    <th key={h} style={{ padding: "8px 16px", textAlign: h === "Hôm qua" || h === "28 ngày" ? "right" : "left", fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: ".05em" }}>
                       {h}
                     </th>
                   ))}
@@ -464,6 +516,7 @@ export default function DashboardPage() {
                   <TopChannelRow
                     key={ch.id}
                     channel={ch}
+                    revenueField={topPeriod}
                     onClick={() => navigate(`/channels/${ch.id}`)}
                   />
                 ))}
@@ -478,16 +531,37 @@ export default function DashboardPage() {
           <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.md, padding: "16px", boxShadow: SHADOW.sm, flex: 1 }}>
             <SectionHeader title="Trạng thái kênh" />
             {monoData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={140}>
-                <PieChart>
-                  <Pie data={monoData} cx="50%" cy="50%" innerRadius={38} outerRadius={58}
-                    dataKey="value" paddingAngle={3}>
-                    {monoData.map((d, i) => <Cell key={i} fill={d.color} />)}
-                  </Pie>
-                  <Tooltip contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                </PieChart>
-              </ResponsiveContainer>
+              <>
+                <ResponsiveContainer width="100%" height={140}>
+                  <PieChart>
+                    <Pie data={monoData} cx="50%" cy="50%" innerRadius={38} outerRadius={58}
+                      dataKey="value" paddingAngle={3}>
+                      {monoData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                    </Pie>
+                    <Tooltip contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: '#fff' }} itemStyle={{ color: '#fff' }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+                {/* Labels với % */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 4 }}>
+                  {monoData.map((d) => {
+                    const total = monoData.reduce((s, x) => s + x.value, 0);
+                    const pct = total > 0 ? ((d.value / total) * 100).toFixed(1) : "0.0";
+                    return (
+                      <div key={d.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{ width: 8, height: 8, borderRadius: "50%", background: d.color, flexShrink: 0 }} />
+                          <span style={{ fontSize: 12, color: C.textSub }}>{d.name}</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: d.color }}>{pct}%</span>
+                          <span style={{ fontSize: 11, color: C.textMuted }}>{d.value.toLocaleString("en-US")}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
             ) : (
               <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontSize: 12 }}>Đang tải...</div>
             )}

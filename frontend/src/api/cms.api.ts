@@ -48,10 +48,11 @@ export function useCmsRevenue(id: string, opts: { days?: number; from?: string; 
 }
 
 // ── Global topics (not per-CMS) ───────────────────────────────
-export function useTopics() {
+export function useTopics(opts?: { cms_id?: string }) {
+  const params = opts?.cms_id ? { cms_id: opts.cms_id } : undefined;
   return useQuery({
-    queryKey: ["topics"],
-    queryFn: () => apiClient.get("topics").json<Topic[]>(),
+    queryKey: ["topics", opts?.cms_id ?? "all"],
+    queryFn: () => apiClient.get("topics", params ? { searchParams: params } : undefined).json<Topic[]>(),
     staleTime: 60_000,
   });
 }
@@ -113,7 +114,7 @@ export function useUpdateCms(id: string) {
 export function useImportCmsRevenue(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (rows: Array<{ snapshot_date: string; revenue: number; views: number }>) =>
+    mutationFn: (rows: Array<{ snapshot_date: string; revenue: number; views: number; watch_time_hours?: number; engaged_views?: number }>) =>
       apiClient.post(`cms/${id}/revenue/import`, { json: rows })
         .json<{ ok: boolean; inserted: number }>(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cms", id, "revenue"] }),
@@ -168,7 +169,7 @@ export function useRevokeCmsApiKey(cmsId: string) {
 }
 
 export function useCmsChannels(id: string, params?: PaginationParams & {
-  topic_id?: string; status?: string; monetization?: string; search?: string;
+  topic_id?: string; content_owner?: string; status?: string; monetization?: string; search?: string;
   min_views?: number; max_views?: number;
   min_revenue?: number; max_revenue?: number;
   min_last_revenue?: number; max_last_revenue?: number;

@@ -1,15 +1,16 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import {
   ClipboardCheck, Search, RefreshCw, ChevronDown, ChevronRight,
   Clock, CheckCircle, XCircle, Eye, ExternalLink,
-  User2, Building2, FileVideo, MessageSquare,
+  User2, Building2, FileVideo, Tv, RotateCcw, Zap,
 } from "lucide-react";
 import { C, RADIUS, SHADOW } from "@/styles/theme";
 import { Button, Pill } from "@/components/ui";
 import {
-  useSubmissionList, useTransitionSubmission, useSubmissionLog,
+  useSubmissionList, useTransitionSubmission, useSubmissionLog, useProvisionSubmission,
   type Submission, type WorkflowState,
 } from "@/api/submissions.api";
+import { useCmsList } from "@/api/cms.api";
 import { useToast } from "@/stores/notificationStore";
 
 // ── State config ──────────────────────────────────────────────
@@ -129,10 +130,148 @@ function ReviewPanel({ sub, onDone }: { sub: Submission; onDone: () => void }) {
   );
 }
 
+// ── Rejected Panel — re-open to reviewing ─────────────────────
+function RejectedPanel({ sub, onDone }: { sub: Submission; onDone: () => void }) {
+  const transition = useTransitionSubmission();
+  const toast = useToast();
+  const handleReopen = async () => {
+    try {
+      await transition.mutateAsync({ id: sub.id, toState: "QC_REVIEWING" });
+      toast.success("Đã mở lại", sub.video_title);
+      onDone();
+    } catch { toast.error("Lỗi", "Không thể mở lại"); }
+  };
+  return (
+    <div style={{ padding: "14px 20px", borderTop: `1px solid ${C.border}`, background: `${C.red}08` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 12, color: C.textMuted }}>Yêu cầu bị từ chối. Mở lại để xem xét lại?</span>
+        <Button variant="ghost" size="sm" icon={<RotateCcw size={13} />} onClick={() => void handleReopen()} disabled={transition.isPending}
+          style={{ color: C.amber, borderColor: C.amber }}>
+          Mở lại xem xét
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Provision Panel — cấp kênh cho QC_APPROVED ───────────────
+function ProvisionPanel({ sub, onDone }: { sub: Submission; onDone: () => void }) {
+  const provision = useProvisionSubmission();
+  const transition = useTransitionSubmission();
+  const toast = useToast();
+  const { data: cmsData } = useCmsList({ limit: 100, status: "Active" });
+  const cmsList = cmsData?.items ?? [];
+
+  const [ytId,      setYtId]      = useState("");
+  const [channelName, setChannelName] = useState(sub.channel_name ?? sub.video_title ?? "");
+  const [cmsId,     setCmsId]     = useState("");
+  const [showForm,  setShowForm]  = useState(false);
+
+  const handleProvision = async () => {
+    if (!ytId.trim()) { toast.warning("Thiếu thông tin", "Nhập YouTube Channel ID"); return; }
+    if (!cmsId)        { toast.warning("Thiếu thông tin", "Chọn CMS"); return; }
+    try {
+      const res = await provision.mutateAsync({ id: sub.id, channelData: { ytId: ytId.trim(), cmsId, name: channelName.trim() || ytId.trim() } });
+      toast.success("Cấp kênh thành công", res.channel.name);
+      onDone();
+    } catch (err) { toast.error("Lỗi cấp kênh", err instanceof Error ? err.message : ""); }
+  };
+
+  const handleMarkFailed = async () => {
+    try {
+      await transition.mutateAsync({ id: sub.id, toState: "PROVISIONING_FAILED", note: "Cấp kênh thất bại" });
+      toast.warning("Đã đánh dấu thất bại", sub.video_title);
+      onDone();
+    } catch { toast.error("Lỗi", ""); }
+  };
+
+  if (sub.workflow_state === "CHANNEL_PROVISIONING") {
+    return (
+      <div style={{ padding: "14px 20px", borderTop: `1px solid ${C.border}`, background: `${C.purple}08` }}>
+        <div style={{ fontSize: 12, color: C.purple, display: "flex", alignItems: "center", gap: 6 }}>
+          <Zap size={13} /> Đang trong quá trình cấp kênh...
+        </div>
+      </div>
+    );
+  }
+
+  if (sub.workflow_state === "PROVISIONING_FAILED") {
+    return (
+      <div style={{ padding: "14px 20px", borderTop: `1px solid ${C.border}`, background: `${C.red}08` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, color: C.red }}>Cấp kênh thất bại.</span>
+          <Button variant="ghost" size="sm" icon={<RotateCcw size={13} />} onClick={() => { setShowForm(true); }}
+            style={{ color: C.amber, borderColor: C.amber }}>Thử lại</Button>
+        </div>
+        {showForm && renderForm()}
+      </div>
+    );
+  }
+
+  // QC_APPROVED
+  return (
+    <div style={{ padding: "14px 20px", borderTop: `1px solid ${C.border}`, background: `${C.teal}08` }}>
+      {!showForm ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, color: C.textSub }}>Yêu cầu đã được duyệt. Tiến hành cấp kênh?</span>
+          <Button variant="primary" size="sm" icon={<Tv size={13} />} onClick={() => setShowForm(true)}>
+            Cấp kênh
+          </Button>
+        </div>
+      ) : renderForm()}
+    </div>
+  );
+
+  function renderForm() {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+          <div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>YouTube Channel ID *</div>
+            <input value={ytId} onChange={(e) => setYtId(e.target.value)} placeholder="UCxxx..."
+              style={{ width: "100%", padding: "7px 10px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>Tên kênh</div>
+            <input value={channelName} onChange={(e) => setChannelName(e.target.value)} placeholder="Tên kênh..."
+              style={{ width: "100%", padding: "7px 10px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>CMS *</div>
+            <select value={cmsId} onChange={(e) => setCmsId(e.target.value)}
+              style={{ width: "100%", padding: "7px 10px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 12, outline: "none" }}>
+              <option value="">-- Chọn CMS --</option>
+              {cmsList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button variant="ghost" size="sm" onClick={() => setShowForm(false)}>Hủy</Button>
+          <Button variant="primary" size="sm" icon={<Tv size={13} />}
+            loading={provision.isPending} onClick={() => void handleProvision()}>
+            Xác nhận cấp kênh
+          </Button>
+          {sub.workflow_state === "QC_APPROVED" && (
+            <Button variant="ghost" size="sm" icon={<XCircle size={13} />}
+              onClick={() => void handleMarkFailed()} disabled={transition.isPending}
+              style={{ color: C.red, borderColor: C.red, marginLeft: "auto" }}>
+              Đánh dấu thất bại
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+}
+
 // ── Submission card ───────────────────────────────────────────
 function SubmissionCard({ sub }: { sub: Submission }) {
   const [expanded, setExpanded] = useState(false);
   const cfg = STATE_CFG[sub.workflow_state];
+
+  const showReviewPanel   = sub.workflow_state === "SUBMITTED" || sub.workflow_state === "QC_REVIEWING";
+  const showRejectedPanel = sub.workflow_state === "QC_REJECTED";
+  const showProvisionPanel = sub.workflow_state === "QC_APPROVED" || sub.workflow_state === "CHANNEL_PROVISIONING" || sub.workflow_state === "PROVISIONING_FAILED";
 
   return (
     <div style={{ background: C.bgCard, borderRadius: RADIUS.md, border: `1px solid ${C.border}`, overflow: "hidden", boxShadow: SHADOW.sm, marginBottom: 10 }}>
@@ -142,11 +281,9 @@ function SubmissionCard({ sub }: { sub: Submission }) {
         onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.background = C.bgHover)}
         onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.background = "transparent")}
       >
-        {/* Icon */}
         <div style={{ width: 34, height: 34, borderRadius: 8, background: `${C.purple}20`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <FileVideo size={15} color={C.purple} />
         </div>
-        {/* Title + meta */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{sub.video_title}</span>
@@ -170,7 +307,6 @@ function SubmissionCard({ sub }: { sub: Submission }) {
       {expanded && (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderTop: `1px solid ${C.border}` }}>
-            {/* Details */}
             <div style={{ padding: "14px 18px", borderRight: `1px solid ${C.border}` }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, marginBottom: 10, textTransform: "uppercase" }}>Chi tiết nội dung</div>
               {sub.video_url && (
@@ -186,13 +322,7 @@ function SubmissionCard({ sub }: { sub: Submission }) {
               {sub.description && (
                 <div style={{ marginBottom: 8 }}>
                   <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 2 }}>Mô tả</div>
-                  <div style={{ fontSize: 12, color: C.textSub, lineHeight: 1.5 }}>{sub.description}</div>
-                </div>
-              )}
-              {sub.storage_type && (
-                <div>
-                  <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 2 }}>Nguồn lưu trữ</div>
-                  <div style={{ fontSize: 12, color: C.textSub }}>{sub.storage_type}{sub.storage_url ? ` — ${sub.storage_url}` : ""}</div>
+                  <div style={{ fontSize: 12, color: C.textSub, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{sub.description}</div>
                 </div>
               )}
               {sub.admin_note && (
@@ -202,17 +332,15 @@ function SubmissionCard({ sub }: { sub: Submission }) {
                 </div>
               )}
             </div>
-            {/* Timeline log */}
             <div>
               <div style={{ padding: "12px 18px 4px", fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Lịch sử</div>
               <LogPanel id={sub.id} />
             </div>
           </div>
 
-          {/* Action panel */}
-          {(sub.workflow_state === "SUBMITTED" || sub.workflow_state === "QC_REVIEWING") && (
-            <ReviewPanel sub={sub} onDone={() => setExpanded(false)} />
-          )}
+          {showReviewPanel   && <ReviewPanel    sub={sub} onDone={() => setExpanded(false)} />}
+          {showRejectedPanel && <RejectedPanel  sub={sub} onDone={() => setExpanded(false)} />}
+          {showProvisionPanel && <ProvisionPanel sub={sub} onDone={() => setExpanded(false)} />}
         </>
       )}
     </div>
@@ -220,24 +348,35 @@ function SubmissionCard({ sub }: { sub: Submission }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────
+type TabKey = "all" | "provision" | "rejected" | "reviewing" | "pending";
+
 export default function QcQueuePage() {
   const [search, setSearch] = useState("");
-  const [stateFilter, setStateFilter] = useState<"SUBMITTED"|"QC_REVIEWING"|"">("");
+  const [activeTab, setActiveTab] = useState<TabKey>("all");
 
-  const { data, isLoading, refetch } = useSubmissionList({
-    state: stateFilter || undefined,
-    search: search || undefined,
-    limit: 100,
-  });
+  const { data, isLoading, refetch } = useSubmissionList({ search: search || undefined, limit: 200 });
   const items = data?.items ?? [];
 
-  const submitted   = items.filter((s) => s.workflow_state === "SUBMITTED").length;
-  const reviewing   = items.filter((s) => s.workflow_state === "QC_REVIEWING").length;
+  const submitted    = items.filter((s) => s.workflow_state === "SUBMITTED").length;
+  const reviewing    = items.filter((s) => s.workflow_state === "QC_REVIEWING").length;
+  const rejected     = items.filter((s) => s.workflow_state === "QC_REJECTED").length;
+  const approved     = items.filter((s) => s.workflow_state === "QC_APPROVED").length;
+  const provisioning = items.filter((s) => s.workflow_state === "CHANNEL_PROVISIONING" || s.workflow_state === "PROVISIONING_FAILED").length;
 
-  const tabs = [
-    { label: "Tất cả chờ",   value: "" as const,            count: submitted + reviewing },
-    { label: "Chờ duyệt",    value: "SUBMITTED" as const,   count: submitted },
-    { label: "Đang xem xét", value: "QC_REVIEWING" as const, count: reviewing },
+  const tabItems: Record<TabKey, Submission[]> = {
+    all:       items.filter((s) => s.workflow_state === "SUBMITTED" || s.workflow_state === "QC_REVIEWING"),
+    pending:   items.filter((s) => s.workflow_state === "SUBMITTED"),
+    reviewing: items.filter((s) => s.workflow_state === "QC_REVIEWING"),
+    rejected:  items.filter((s) => s.workflow_state === "QC_REJECTED"),
+    provision: items.filter((s) => s.workflow_state === "QC_APPROVED" || s.workflow_state === "CHANNEL_PROVISIONING" || s.workflow_state === "PROVISIONING_FAILED"),
+  };
+
+  const tabs: Array<{ key: TabKey; label: string; count: number; color: string }> = [
+    { key: "all",       label: "Hàng chờ QC",  count: submitted + reviewing,  color: C.blue   },
+    { key: "provision", label: "Cấp kênh",      count: approved + provisioning, color: C.teal   },
+    { key: "rejected",  label: "Từ chối",       count: rejected,               color: C.red    },
+    { key: "reviewing", label: "Đang xem xét",  count: reviewing,              color: C.amber  },
+    { key: "pending",   label: "Chờ duyệt",     count: submitted,              color: C.purple },
   ];
 
   return (
@@ -255,11 +394,13 @@ export default function QcQueuePage() {
       </div>
 
       {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
         {[
-          { label: "Chờ duyệt",    value: submitted,                  color: C.blue },
-          { label: "Đang xem xét", value: reviewing,                  color: C.amber },
-          { label: "Tổng cần xử lý", value: submitted + reviewing,   color: C.purple },
+          { label: "Chờ duyệt",      value: submitted,   color: C.blue   },
+          { label: "Đang xem xét",   value: reviewing,   color: C.amber  },
+          { label: "Từ chối",         value: rejected,    color: C.red    },
+          { label: "Chờ cấp kênh",   value: approved,    color: C.teal   },
+          { label: "Đang cấp / lỗi", value: provisioning,color: C.purple },
         ].map(({ label, value, color }) => (
           <div key={label} style={{ background: C.bgCard, borderRadius: RADIUS.md, border: `1px solid ${C.border}`, padding: "14px 16px", boxShadow: SHADOW.sm }}>
             <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>{label}</div>
@@ -268,12 +409,15 @@ export default function QcQueuePage() {
         ))}
       </div>
 
-      {/* Filters */}
+      {/* Tabs + Search */}
       <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 3, background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, padding: 3 }}>
-          {tabs.map(({ label, value, count }) => (
-            <button key={value} onClick={() => setStateFilter(value)}
-              style={{ padding: "5px 12px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 12, background: stateFilter === value ? C.blue : "transparent", color: stateFilter === value ? "#fff" : C.textSub, transition: "all .15s", fontWeight: stateFilter === value ? 600 : 400 }}>
+          {tabs.map(({ key, label, count, color }) => (
+            <button key={key} onClick={() => setActiveTab(key)}
+              style={{ padding: "5px 14px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 12,
+                background: activeTab === key ? color : "transparent",
+                color: activeTab === key ? "#fff" : C.textSub,
+                transition: "all .15s", fontWeight: activeTab === key ? 600 : 400 }}>
               {label}
               <span style={{ marginLeft: 5, fontSize: 10, opacity: 0.8 }}>({count})</span>
             </button>
@@ -286,16 +430,22 @@ export default function QcQueuePage() {
         </div>
       </div>
 
-      {/* Queue */}
+      {/* List */}
       {isLoading ? (
         <div style={{ padding: 40, textAlign: "center", color: C.textMuted }}>Đang tải...</div>
-      ) : items.length === 0 ? (
+      ) : tabItems[activeTab].length === 0 ? (
         <div style={{ padding: 60, textAlign: "center" }}>
           <ClipboardCheck size={40} color={C.textMuted} style={{ marginBottom: 12 }} />
-          <div style={{ color: C.textSub, fontSize: 14 }}>Không có yêu cầu nào cần xử lý</div>
+          <div style={{ color: C.textSub, fontSize: 14 }}>
+            {activeTab === "rejected"  ? "Không có yêu cầu bị từ chối" :
+             activeTab === "provision" ? "Không có yêu cầu chờ cấp kênh" :
+             activeTab === "reviewing" ? "Không có yêu cầu đang xem xét" :
+             activeTab === "pending"   ? "Không có yêu cầu chờ duyệt" :
+             "Không có yêu cầu nào trong hàng chờ"}
+          </div>
         </div>
       ) : (
-        items.map((sub) => <SubmissionCard key={sub.id} sub={sub} />)
+        tabItems[activeTab].map((sub) => <SubmissionCard key={sub.id} sub={sub} />)
       )}
     </div>
   );

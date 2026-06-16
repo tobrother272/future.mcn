@@ -3,7 +3,7 @@ import { apiClient } from "./client";
 import type { Partner, PartnerUser } from "@/types/partner";
 import type { PaginatedResponse } from "@/types/api";
 
-interface PartnerFilters { type?: string; tier?: string; status?: string; search?: string; page?: number; limit?: number; }
+interface PartnerFilters { type?: string; tier?: string; status?: string; search?: string; cms_id?: string; page?: number; limit?: number; }
 
 export function usePartnerList(filters?: PartnerFilters) {
   return useQuery({
