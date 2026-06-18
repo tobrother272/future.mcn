@@ -65,4 +65,11 @@ router.post("/:id/provision", async (req, res, next) => {
   } catch(e) { next(e); }
 });
 
+router.delete("/:id", async (req, res, next) => {
+  try {
+    await WorkflowService.delete(req.params.id!, req.user!.id);
+    res.json({ ok: true });
+  } catch(e) { next(e); }
+});
+
 export { router as submissionsRouter };

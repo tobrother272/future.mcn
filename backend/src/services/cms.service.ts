@@ -76,7 +76,7 @@ export const CmsService = {
 
   async getStats(id: string): Promise<CmsStats> {
     // Always use live query so stats reflect real-time channel updates
-    const res = await queryOne<CmsStats>(
+    const res = await queryOne<Omit<CmsStats, "total_monthly_revenue" | "revenue_90" | "revenue_365" | "revenue_lifetime">>(
       `SELECT
          c.cms_id,
          cm.name AS cms_name, cm.currency,
@@ -85,24 +85,11 @@ export const CmsService = {
          COUNT(c.id) FILTER (WHERE c.monetization='On')::int                     AS monetized,
          COUNT(c.id) FILTER (WHERE c.monetization='Off')::int                    AS demonetized,
          COUNT(c.id) FILTER (WHERE c.health='Critical')::int                     AS critical_channels,
-         COALESCE(SUM(COALESCE(ca_m.monthly_revenue, 0)), 0)::float8             AS total_monthly_revenue,
          COALESCE(SUM(c.subscribers),0)::float8                                  AS total_subscribers,
          COALESCE(SUM(c.monthly_views),0)::float8                                AS total_monthly_views,
-         COUNT(DISTINCT c.partner_id) FILTER (WHERE c.partner_id IS NOT NULL)::int AS partner_count,
-         COALESCE(SUM(cap90.revenue),  0)::float8                                AS revenue_90,
-         COALESCE(SUM(cap365.revenue), 0)::float8                                AS revenue_365,
-         COALESCE(SUM(caplt.revenue),  0)::float8                                AS revenue_lifetime
+         COUNT(DISTINCT c.partner_id) FILTER (WHERE c.partner_id IS NOT NULL)::int AS partner_count
        FROM channel c
        JOIN cms cm ON c.cms_id = cm.id
-       LEFT JOIN (
-         SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
-         FROM channel_analytics
-         WHERE date >= CURRENT_DATE - 30 AND date <= CURRENT_DATE - 2
-         GROUP BY channel_id
-       ) ca_m ON ca_m.channel_id = c.id
-       LEFT JOIN (SELECT channel_id, revenue FROM channel_analytics_period WHERE period = '90')       cap90 ON cap90.channel_id = c.id
-       LEFT JOIN (SELECT channel_id, revenue FROM channel_analytics_period WHERE period = '365')      cap365 ON cap365.channel_id = c.id
-       LEFT JOIN (SELECT channel_id, revenue FROM channel_analytics_period WHERE period = 'lifetime') caplt  ON caplt.channel_id = c.id
        WHERE c.cms_id = $1
        GROUP BY c.cms_id, cm.name, cm.currency`,
       [id]
@@ -111,52 +98,122 @@ export const CmsService = {
       const cms = await CmsService.getById(id);
       return { cms_id: id, cms_name: cms.name, currency: cms.currency, total_channels:0, active_channels:0, monetized:0, demonetized:0, critical_channels:0, total_monthly_revenue:0, total_subscribers:0, total_monthly_views:0, partner_count:0, revenue_90:0, revenue_365:0, revenue_lifetime:0 };
     }
-    return res;
+    // All revenue figures use the same getRevenue logic as the history page
+    // (dynamic max_date + CSV priority) — run in parallel for performance
+    const [rev28, rev90, rev365, revLifetime] = await Promise.all([
+      CmsService.getRevenue(id, { days: 28 }),
+      CmsService.getRevenue(id, { days: 90 }),
+      CmsService.getRevenue(id, { days: 365 }),
+      CmsService.getRevenue(id, { isLifetime: true }),
+    ]);
+    const sum = (rows: { revenue: number }[]) => rows.reduce((s, r) => s + Number(r.revenue), 0);
+    return {
+      ...res,
+      total_monthly_revenue: sum(rev28),
+      revenue_90:       sum(rev90),
+      revenue_365:      sum(rev365),
+      revenue_lifetime: sum(revLifetime),
+    };
   },
 
   async getRevenue(id: string, opts: { days?: number; from?: string; to?: string; isLifetime?: boolean } = {}) {
     await CmsService.getById(id);
     const { days = 28, from, to, isLifetime } = opts;
-    // +1 to start window 1 day earlier so that with the 2-day tool-lag
-    // a "28-day" request still returns exactly 28 rows (Apr 22–May 19).
-    const filterDays = days + 2;
-    const dateFilter = isLifetime
-      ? `1=1`  // no date filter — all historical data
-      : from && to
-        ? `ca.date >= $2::date AND ca.date <= $3::date`
-        : `ca.date >= CURRENT_DATE - ($2::int) AND ca.date <= CURRENT_DATE - 2`;
-    const params = isLifetime ? [id] : from && to ? [id, from, to] : [id, filterDays];
-    // Aggregate from channel_analytics for all channels in this CMS
-    const rows = await queryMany<{ snapshot_date: string; revenue: number; views: number; engaged_views: number; watch_time_hours: number; channels_count: number }>(
-      `SELECT
-         ca.date                          AS snapshot_date,
-         SUM(ca.revenue)::float8          AS revenue,
-         SUM(ca.views)::float8            AS views,
-         SUM(ca.engaged_views)::float8    AS engaged_views,
-         SUM(ca.watch_time_hours)::float8 AS watch_time_hours,
-         COUNT(DISTINCT ca.channel_id)::int AS channels_count
-       FROM channel_analytics ca
-       WHERE ca.cms_id = $1
-         AND ${dateFilter}
-       GROUP BY ca.date
-       ORDER BY ca.date ASC`,
-      params
-    );
-    // Fall back to legacy revenue_daily if no channel_analytics data
-    if (rows.length > 0) return rows;
-    const legacyFilter = isLifetime
-      ? `1=1`
-      : from && to
-        ? `snapshot_date >= $2::date AND snapshot_date <= $3::date`
-        : `snapshot_date >= CURRENT_DATE - ($2::int)`;
-    return queryMany(
-      `SELECT snapshot_date, revenue::float8 AS revenue, views::float8 AS views,
-              0::float8 AS engaged_views, 0::float8 AS watch_time_hours, 0::int AS channels_count
-       FROM revenue_daily
-       WHERE scope = 'cms' AND scope_id = $1
-         AND ${legacyFilter}
+
+    // Date filters for each context (analytics alias ca, csv alias rd, sub-alias ca_sub)
+    // For preset days: find the most recent date with analytics data for this CMS,
+    // then use that as the upper bound. This avoids off-by-one issues from data lag.
+    let dateFilterCA: string;
+    let dateFilterRD: string;
+    let dateFilterSub: string;
+    let queryParams: unknown[];
+
+    if (isLifetime) {
+      dateFilterCA  = "1=1";
+      dateFilterRD  = "1=1";
+      dateFilterSub = "1=1";
+      queryParams   = [id];
+    } else if (from && to) {
+      dateFilterCA  = "ca.date >= $2::date AND ca.date <= $3::date";
+      dateFilterRD  = "rd.snapshot_date >= $2::date AND rd.snapshot_date <= $3::date";
+      dateFilterSub = "ca_sub.date >= $2::date AND ca_sub.date <= $3::date";
+      queryParams   = [id, from, to];
+    } else {
+      // Find the most recent date where a meaningful number of channels reported data
+      // (at least 50% of the peak channel count seen in the last 14 days).
+      // This prevents a single test/partial push from skewing the window anchor.
+      const maxRes = await queryOne<{ max_date: string }>(
+        `WITH recent_counts AS (
+           SELECT ca.date, COUNT(DISTINCT ca.channel_id) AS ch_count
+           FROM channel_analytics ca
+           JOIN channel_cms_history h ON h.channel_id = ca.channel_id
+             AND h.cms_id = $1
+             AND ca.date >= h.from_date
+             AND (h.to_date IS NULL OR ca.date <= h.to_date)
+           WHERE ca.date >= CURRENT_DATE - 14
+           GROUP BY ca.date
+         ),
+         threshold AS (SELECT GREATEST(1, MAX(ch_count) * 0.5) AS val FROM recent_counts)
+         SELECT COALESCE(MAX(rc.date)::text, (CURRENT_DATE - 3)::text) AS max_date
+         FROM recent_counts rc, threshold t
+         WHERE rc.ch_count >= t.val`,
+        [id]
+      );
+      const maxDate = maxRes?.max_date ?? new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
+      // Window: [maxDate - (days-1), maxDate] = exactly `days` slots
+      dateFilterCA  = "ca.date >= $2::date - ($3::int - 1) AND ca.date <= $2::date";
+      dateFilterRD  = "rd.snapshot_date >= $2::date - ($3::int - 1) AND rd.snapshot_date <= $2::date";
+      dateFilterSub = "ca_sub.date >= $2::date - ($3::int - 1) AND ca_sub.date <= $2::date";
+      queryParams   = [id, maxDate, days];
+    }
+
+    // Priority rule (based on tool pushing 50 days per run):
+    //   date within last 50 days → analytics is most up-to-date (priority 1)
+    //   date older than 50 days  → CSV from Studio is authoritative (priority 1)
+    // ROW_NUMBER picks the best source per date; the other source fills gaps.
+    return queryMany<{ snapshot_date: string; revenue: number; views: number; engaged_views: number; watch_time_hours: number; channels_count: number }>(
+      `WITH all_data AS (
+         SELECT
+           ca.date                            AS d,
+           SUM(ca.revenue)::float8            AS revenue,
+           SUM(ca.views)::float8              AS views,
+           SUM(ca.engaged_views)::float8      AS engaged_views,
+           SUM(ca.watch_time_hours)::float8   AS watch_time_hours,
+           COUNT(DISTINCT ca.channel_id)::int AS channels_count,
+           CASE WHEN ca.date > CURRENT_DATE - 50 THEN 1 ELSE 2 END AS prio
+         FROM channel_analytics ca
+         JOIN channel_cms_history h
+           ON  h.channel_id = ca.channel_id
+           AND h.cms_id     = $1
+           AND ca.date >= h.from_date
+           AND (h.to_date IS NULL OR ca.date <= h.to_date)
+         WHERE ${dateFilterCA}
+         GROUP BY ca.date
+
+         UNION ALL
+
+         SELECT
+           rd.snapshot_date                        AS d,
+           rd.revenue::float8,
+           rd.views::float8,
+           COALESCE(rd.engaged_views, 0)::float8,
+           COALESCE(rd.watch_time_hours, 0)::float8,
+           0::int,
+           CASE WHEN rd.snapshot_date <= CURRENT_DATE - 50 THEN 1 ELSE 2 END AS prio
+         FROM revenue_daily rd
+         WHERE rd.scope = 'cms' AND rd.scope_id = $1
+           AND rd.source = 'csv_import'
+           AND ${dateFilterRD}
+       ),
+       ranked AS (
+         SELECT *, ROW_NUMBER() OVER (PARTITION BY d ORDER BY prio ASC) AS rn
+         FROM all_data
+       )
+       SELECT d AS snapshot_date, revenue, views, engaged_views, watch_time_hours, channels_count
+       FROM ranked
+       WHERE rn = 1
        ORDER BY snapshot_date ASC`,
-      params
+      queryParams
     );
   },
 
@@ -180,10 +237,16 @@ export const CmsService = {
        FROM channel c
        LEFT JOIN topic t ON c.topic_id = t.id
        LEFT JOIN (
-         SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
-         FROM channel_analytics
-         WHERE date >= CURRENT_DATE - 30 AND date <= CURRENT_DATE - 2
-         GROUP BY channel_id
+         -- Revenue scoped to this CMS's ownership dates
+         SELECT ca.channel_id, COALESCE(SUM(ca.revenue), 0)::float8 AS monthly_revenue
+         FROM channel_analytics ca
+         JOIN channel_cms_history h
+           ON  h.channel_id = ca.channel_id
+           AND h.cms_id     = $1
+           AND ca.date >= h.from_date
+           AND (h.to_date IS NULL OR ca.date <= h.to_date)
+         WHERE ca.date >= CURRENT_DATE - 28 AND ca.date <= CURRENT_DATE - 2
+         GROUP BY ca.channel_id
        ) ca_m ON ca_m.channel_id = c.id
        WHERE c.cms_id = $1
          AND c.status <> 'Terminated'
@@ -196,7 +259,7 @@ export const CmsService = {
   async getChannels(id: string, params: {
     page?: number; limit?: number;
     status?: string; monetization?: string; search?: string;
-    topic_id?: string;
+    topic_id?: string; content_owner?: string;
     min_views?: number; max_views?: number;
     min_revenue?: number; max_revenue?: number;
     min_last_revenue?: number; max_last_revenue?: number;
@@ -206,14 +269,15 @@ export const CmsService = {
     let idx = 2;
     const andClauses: string[] = [];
 
-    if (params.status)      { andClauses.push(`c.status = $${idx++}`);            baseParams.push(params.status); }
-    if (params.monetization){ andClauses.push(`c.monetization = $${idx++}`);       baseParams.push(params.monetization); }
+    if (params.status)        { andClauses.push(`c.status = $${idx++}`);         baseParams.push(params.status); }
+    if (params.monetization)  { andClauses.push(`c.monetization = $${idx++}`);   baseParams.push(params.monetization); }
     if (params.search) {
       const { sql, nextIdx } = appendChannelSearchFilter(params.search, idx, baseParams);
       andClauses.push(sql);
       idx = nextIdx;
     }
-    if (params.topic_id)    { andClauses.push(`c.topic_id = $${idx++}`);           baseParams.push(params.topic_id); }
+    if (params.topic_id)      { andClauses.push(`c.topic_id = $${idx++}`);       baseParams.push(params.topic_id); }
+    if (params.content_owner) { andClauses.push(`c.content_owner = $${idx++}`);  baseParams.push(params.content_owner); }
     if (params.min_views != null && params.min_views > 0)     { andClauses.push(`c.total_views >= $${idx++}`);    baseParams.push(params.min_views); }
     if (params.max_views != null && params.max_views > 0)     { andClauses.push(`c.total_views <= $${idx++}`);    baseParams.push(params.max_views); }
     if (params.min_revenue != null && params.min_revenue > 0) { andClauses.push(`COALESCE((SELECT SUM(revenue) FROM channel_analytics WHERE channel_id = c.id AND date >= CURRENT_DATE - 30 AND date <= CURRENT_DATE - 2), 0) >= $${idx++}`);  baseParams.push(params.min_revenue); }
@@ -234,14 +298,10 @@ export const CmsService = {
     );
     const rows = await queryMany(
       `SELECT c.*, p.name AS partner_name, t.name AS topic_name,
-              COALESCE(cap.period_revenue, ca_m.monthly_revenue, 0)::float8 AS monthly_revenue
+              COALESCE(ca_m.monthly_revenue, 0)::float8 AS monthly_revenue
        FROM channel c
        LEFT JOIN partner p ON c.partner_id = p.id
        LEFT JOIN topic t   ON c.topic_id   = t.id
-       LEFT JOIN (
-         SELECT channel_id, revenue::float8 AS period_revenue
-         FROM channel_analytics_period WHERE period = '28'
-       ) cap ON cap.channel_id = c.id
        LEFT JOIN (
          SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
          FROM channel_analytics

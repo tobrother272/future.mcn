@@ -19,16 +19,29 @@ const bodySchema = z.object({
   expected_channels: z.coerce.number().int().min(0).default(0),
 });
 
-// GET /api/topics — list all topics (with channel count)
-router.get("/", async (_req, res, next) => {
+// GET /api/topics — list all topics (with channel count), optional ?cms_id filter
+router.get("/", async (req, res, next) => {
   try {
-    const rows = await queryMany(
-      `SELECT t.*, COALESCE(ch.cnt, 0)::int AS channel_count
-       FROM topic t
-       LEFT JOIN (SELECT topic_id, COUNT(*)::int AS cnt FROM channel GROUP BY topic_id) ch
-             ON ch.topic_id = t.id
-       ORDER BY t.name`
-    );
+    const cmsId = req.query.cms_id as string | undefined;
+    let rows;
+    if (cmsId) {
+      rows = await queryMany(
+        `SELECT DISTINCT t.*
+         FROM topic t
+         JOIN channel c ON c.topic_id = t.id
+         WHERE c.cms_id = $1
+         ORDER BY t.name`,
+        [cmsId]
+      );
+    } else {
+      rows = await queryMany(
+        `SELECT t.*, COALESCE(ch.cnt, 0)::int AS channel_count
+         FROM topic t
+         LEFT JOIN (SELECT topic_id, COUNT(*)::int AS cnt FROM channel GROUP BY topic_id) ch
+               ON ch.topic_id = t.id
+         ORDER BY t.name`
+      );
+    }
     res.json(rows);
   } catch (e) { next(e); }
 });

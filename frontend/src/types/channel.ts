@@ -27,6 +27,7 @@ export interface Channel {
   unlinked_at?: string | null;
   unlink_reason?: string | null;
   notes?: string | null;
+  content_owner?: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -40,6 +41,7 @@ export interface ChannelCreate {
   cms_id?: string;
   partner_id?: string | null;
   topic_id?: string | null;
+  content_owner?: string | null;
   yt_id?: string;
   name: string;
   country?: string;
@@ -52,6 +54,8 @@ export interface ChannelFilters {
   cms_id?: string;
   partner_id?: string;
   partner_ids?: string[];
+  topic_id?: string;
+  content_owner?: string;
   status?: ChannelStatus;
   monetization?: MonetizationStatus;
   search?: string;

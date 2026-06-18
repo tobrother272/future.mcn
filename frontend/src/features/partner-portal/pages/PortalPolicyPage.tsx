@@ -1,8 +1,9 @@
-﻿import { useState, useCallback, useEffect } from "react";
-import { ShieldCheck, ChevronDown, ChevronLeft, ChevronRight, Search, X, Image, ImageOff, ZoomIn } from "lucide-react";
+import { useState, useCallback, useEffect } from "react";
+import { ShieldCheck, ChevronDown, ChevronLeft, ChevronRight, Search, X, Image, ImageOff, ZoomIn, Tag } from "lucide-react";
 import { C, RADIUS, SHADOW } from "@/styles/theme";
-import { usePolicyList } from "@/api/policies.api";
+import { usePolicyList, usePolicyCategories } from "@/api/policies.api";
 import type { Policy } from "@/api/policies.api";
+import { useTopics } from "@/api/cms.api";
 import { fmtDate } from "@/lib/format";
 
 // ── Image path helper ─────────────────────────────────────────
@@ -190,16 +191,40 @@ function PolicyCard({ policy }: { policy: Policy }) {
   );
 }
 
+// ── Category color helper ──────────────────────────────────────
+const CATEGORY_COLORS: Record<string, string> = {
+  "Youtube Policy": C.blue,
+  "Net Update":     C.amber,
+  "Net Notify":     C.purple,
+};
+function categoryColor(cat: string): string {
+  return CATEGORY_COLORS[cat] ?? C.teal;
+}
+
 // ── Portal Policy Page ────────────────────────────────────────
 export default function PortalPolicyPage() {
-  const [search, setSearch] = useState("");
-  const [query, setQuery]   = useState("");
-  const [page, setPage]     = useState(0);
+  const [search, setSearch]               = useState("");
+  const [query, setQuery]                 = useState("");
+  const [topicFilter, setTopicFilter]     = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [page, setPage]                   = useState(0);
   const limit = 15;
 
-  const { data, isLoading } = usePolicyList({ search: query || undefined, limit, offset: page * limit });
+  const { data: allTopics = [] }  = useTopics();
+  const { data: categories = [] } = usePolicyCategories();
+
+  const { data, isLoading } = usePolicyList({
+    search:   query || undefined,
+    topic_id: topicFilter    || undefined,
+    category: categoryFilter || undefined,
+    limit,
+    offset: page * limit,
+  });
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / limit);
+
+  const clearAll = () => { setSearch(""); setQuery(""); setTopicFilter(""); setCategoryFilter(""); setPage(0); };
+  const hasFilter = !!(query || topicFilter || categoryFilter);
 
   return (
     <div style={{ padding: "28px 32px", maxWidth: 900, margin: "0 auto" }}>
@@ -228,24 +253,78 @@ export default function PortalPolicyPage() {
         </div>
       </div>
 
-      {/* Search */}
-      <form onSubmit={(e) => { e.preventDefault(); setQuery(search); setPage(0); }} style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-        <div style={{ position: "relative", flex: 1, maxWidth: 400 }}>
-          <Search size={13} color={C.textMuted} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm chính sách..."
-            style={{ width: "100%", paddingLeft: 34, paddingRight: 12, paddingTop: 9, paddingBottom: 9, background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-        </div>
-        <button type="submit" style={{ padding: "9px 16px", background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, cursor: "pointer", fontSize: 13, color: C.textSub }}>Tìm</button>
-        {query && (
-          <button type="button" onClick={() => { setSearch(""); setQuery(""); }}
-            style={{ padding: "9px 14px", background: "transparent", border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, cursor: "pointer", fontSize: 13, color: C.textMuted, display: "flex", alignItems: "center", gap: 5 }}>
-            <X size={12} /> Xóa lọc
-          </button>
+      {/* Search + filters */}
+      <div style={{ marginBottom: 20 }}>
+        <form onSubmit={(e) => { e.preventDefault(); setQuery(search); setPage(0); }} style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <div style={{ position: "relative", flex: 1, maxWidth: 400 }}>
+            <Search size={13} color={C.textMuted} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm chính sách..."
+              style={{ width: "100%", paddingLeft: 34, paddingRight: 12, paddingTop: 9, paddingBottom: 9, background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+          </div>
+          <button type="submit" style={{ padding: "9px 16px", background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, cursor: "pointer", fontSize: 13, color: C.textSub }}>Tìm</button>
+          {hasFilter && (
+            <button type="button" onClick={clearAll}
+              style={{ padding: "9px 14px", background: "transparent", border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, cursor: "pointer", fontSize: 13, color: C.textMuted, display: "flex", alignItems: "center", gap: 5 }}>
+              <X size={12} /> Xóa lọc
+            </button>
+          )}
+          <span style={{ marginLeft: "auto", fontSize: 12, color: C.textMuted, display: "flex", alignItems: "center" }}>
+            {isLoading ? "Đang tải..." : `${total} chính sách`}
+          </span>
+        </form>
+
+        {/* Category filter chips */}
+        {categories.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 11, color: C.textMuted }}>Phân loại:</span>
+            <button onClick={() => { setCategoryFilter(""); setPage(0); }}
+              style={{ padding: "3px 12px", borderRadius: 99, fontSize: 11, cursor: "pointer",
+                border: `1px solid ${!categoryFilter ? C.blue : C.border}`,
+                background: !categoryFilter ? `${C.blue}15` : "transparent",
+                color: !categoryFilter ? C.blue : C.textMuted }}>
+              Tất cả
+            </button>
+            {categories.map((cat) => {
+              const color = categoryColor(cat);
+              return (
+                <button key={cat} onClick={() => { setCategoryFilter(categoryFilter === cat ? "" : cat); setPage(0); }}
+                  style={{ padding: "3px 12px", borderRadius: 99, fontSize: 11, cursor: "pointer",
+                    border: `1px solid ${categoryFilter === cat ? color : C.border}`,
+                    background: categoryFilter === cat ? `${color}15` : "transparent",
+                    color: categoryFilter === cat ? color : C.textMuted,
+                    fontWeight: categoryFilter === cat ? 700 : 400 }}>
+                  {cat}
+                </button>
+              );
+            })}
+          </div>
         )}
-        <span style={{ marginLeft: "auto", fontSize: 12, color: C.textMuted, display: "flex", alignItems: "center" }}>
-          {isLoading ? "Đang tải..." : `${total} chính sách`}
-        </span>
-      </form>
+
+        {/* Topic filter chips */}
+        {allTopics.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: C.textMuted }}>Chủ đề:</span>
+            <button onClick={() => { setTopicFilter(""); setPage(0); }}
+              style={{ padding: "3px 12px", borderRadius: 99, fontSize: 11, cursor: "pointer",
+                border: `1px solid ${!topicFilter ? C.blue : C.border}`,
+                background: !topicFilter ? `${C.blue}15` : "transparent",
+                color: !topicFilter ? C.blue : C.textMuted }}>
+              Tất cả
+            </button>
+            {allTopics.map((t) => (
+              <button key={t.id} onClick={() => { setTopicFilter(topicFilter === t.id ? "" : t.id); setPage(0); }}
+                style={{ padding: "3px 12px", borderRadius: 99, fontSize: 11, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 4,
+                  border: `1px solid ${topicFilter === t.id ? C.teal : C.border}`,
+                  background: topicFilter === t.id ? `${C.teal}15` : "transparent",
+                  color: topicFilter === t.id ? C.teal : C.textMuted,
+                  fontWeight: topicFilter === t.id ? 600 : 400 }}>
+                <Tag size={9} />{t.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Content */}
       {isLoading ? (

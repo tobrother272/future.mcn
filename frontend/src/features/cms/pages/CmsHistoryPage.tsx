@@ -1,4 +1,4 @@
-﻿import { useState, useRef } from "react";
+import { useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ChevronLeft, Upload, CheckCircle } from "lucide-react";
 import {
@@ -12,34 +12,78 @@ import { useToast } from "@/stores/notificationStore";
 import { fmtCurrency, fmtDate, fmt } from "@/lib/format";
 import { PERIOD_OPTIONS, periodToParams, todayInputDate, type PeriodKey } from "@/lib/periods";
 
-// ── CSV parser for YouTube Studio daily revenue export ───────
-// Columns: Date, Engaged views, Views, Watch time, Avg duration, Estimated partner revenue (USD)
-function parseRevenueCSV(text: string): Array<{ snapshot_date: string; revenue: number; views: number }> {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return [];
+// ── CSV parser ────────────────────────────────────────────────
+// Supports YouTube Studio exports in both English and Vietnamese.
+// Vietnamese headers: Ngày, Số lượt xem, Lượt xem có tính phí,
+//   Thời gian xem (giờ), Thời lượng xem trung bình,
+//   Doanh thu ước tính của đối tác (USD)
+// English headers: Date, Views, Engaged views, Watch time (hours),
+//   Average view duration, Estimated partner revenue (USD)
 
-  const headers = (lines[0] ?? "").split(",").map((h) => h.trim().toLowerCase());
-  const idxDate    = headers.findIndex((h) => h === "date");
-  const idxViews   = headers.findIndex((h) => h === "views");
-  const idxRevenue = headers.findIndex((h) => h.includes("revenue"));
+type CsvRow = { snapshot_date: string; revenue: number; views: number; engaged_views: number; watch_time_hours: number };
+type LifetimeSummary = Omit<CsvRow, "snapshot_date">;
 
-  const rows: Array<{ snapshot_date: string; revenue: number; views: number }> = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = (lines[i] ?? "").split(",").map((c) => c.trim());
-    const date    = idxDate    >= 0 ? (cols[idxDate]    ?? "") : "";
-    const revenue = idxRevenue >= 0 ? (cols[idxRevenue] ?? "") : "";
-    const views   = idxViews   >= 0 ? (cols[idxViews]   ?? "") : "";
-
-    // Skip Total row and invalid dates
-    if (!date || date.toLowerCase() === "total" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
-
-    rows.push({
-      snapshot_date: date,
-      revenue:       Number((revenue ?? "").replace(/[^0-9.]/g, "")) || 0,
-      views:         Number((views ?? "").replace(/[^0-9.]/g, ""))   || 0,
-    });
+function splitCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    if (ch === '"') { inQ = !inQ; }
+    else if (ch === "," && !inQ) { result.push(cur); cur = ""; }
+    else { cur += ch; }
   }
-  return rows;
+  result.push(cur);
+  return result;
+}
+
+function parseNum(s: string): number {
+  return Number(s.replace(/"/g, "").replace(/[^0-9.]/g, "")) || 0;
+}
+
+function parseRevenueCSV(text: string): { rows: CsvRow[]; lifetimeSummary: LifetimeSummary | null } {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) return { rows: [], lifetimeSummary: null };
+
+  const headers = splitCsvLine(lines[0] ?? "").map((h) => h.replace(/"/g, "").trim().toLowerCase());
+
+  const idxDate     = headers.findIndex((h) => h === "date"   || h === "ngày");
+  const idxViews    = headers.findIndex((h) => h === "views"  || h === "số lượt xem");
+  const idxEngaged  = headers.findIndex((h) => h.includes("engaged")   || h.includes("tính phí") || h.includes("có chủ đích"));
+  const idxRevenue  = headers.findIndex((h) => h.includes("revenue")   || h.includes("doanh thu"));
+  const idxWatchTime= headers.findIndex((h) => h.includes("watch time")|| h.includes("thời gian xem"));
+
+  const rows: CsvRow[] = [];
+  let lifetimeSummary: LifetimeSummary | null = null;
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols   = splitCsvLine(lines[i] ?? "");
+    const rawDate = (cols[idxDate] ?? "").replace(/"/g, "").trim();
+    if (!rawDate) continue;
+
+    const revenue        = parseNum(idxRevenue   >= 0 ? (cols[idxRevenue]   ?? "") : "");
+    const views          = parseNum(idxViews     >= 0 ? (cols[idxViews]     ?? "") : "");
+    const engaged_views  = parseNum(idxEngaged   >= 0 ? (cols[idxEngaged]   ?? "") : "");
+    const watch_time_hours = parseNum(idxWatchTime >= 0 ? (cols[idxWatchTime] ?? "") : "");
+
+    // Capture "Tổng" / "Total" row as lifetime summary
+    const lower = rawDate.toLowerCase();
+    if (lower === "tổng" || lower === "total") {
+      lifetimeSummary = { revenue, views, engaged_views, watch_time_hours };
+      continue;
+    }
+
+    // Parse date — support YYYY-MM-DD (default) and DD/MM/YYYY fallback
+    let date = rawDate;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      const m = date.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (m) date = `${m[3]}-${m[2]!.padStart(2, "0")}-${m[1]!.padStart(2, "0")}`;
+      else continue;
+    }
+
+    rows.push({ snapshot_date: date, revenue, views, engaged_views, watch_time_hours });
+  }
+  return { rows, lifetimeSummary };
 }
 
 // ── Import Modal ─────────────────────────────────────────────
@@ -47,7 +91,8 @@ function ImportRevenueModal({ open, onClose, cmsId }: { open: boolean; onClose: 
   const toast = useToast();
   const importMut = useImportCmsRevenue(cmsId);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [rows, setRows] = useState<Array<{ snapshot_date: string; revenue: number; views: number }>>([]);
+  const [rows, setRows] = useState<CsvRow[]>([]);
+  const [lifetimeSummary, setLifetimeSummary] = useState<LifetimeSummary | null>(null);
   const [fileName, setFileName] = useState("");
   const [result, setResult] = useState<{ inserted: number } | null>(null);
 
@@ -57,7 +102,11 @@ function ImportRevenueModal({ open, onClose, cmsId }: { open: boolean; onClose: 
     setFileName(file.name);
     setResult(null);
     const reader = new FileReader();
-    reader.onload = (ev) => setRows(parseRevenueCSV(ev.target?.result as string));
+    reader.onload = (ev) => {
+      const { rows: parsed, lifetimeSummary: ls } = parseRevenueCSV(ev.target?.result as string);
+      setRows(parsed);
+      setLifetimeSummary(ls);
+    };
     reader.readAsText(file, "utf-8");
   };
 
@@ -72,16 +121,17 @@ function ImportRevenueModal({ open, onClose, cmsId }: { open: boolean; onClose: 
   };
 
   const handleClose = () => {
-    setRows([]); setFileName(""); setResult(null);
+    setRows([]); setLifetimeSummary(null); setFileName(""); setResult(null);
     if (fileRef.current) fileRef.current.value = "";
     onClose();
   };
 
-  const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
-  const totalViews   = rows.reduce((s, r) => s + r.views, 0);
+  const totalRevenue     = rows.reduce((s, r) => s + r.revenue, 0);
+  const totalViews       = rows.reduce((s, r) => s + r.views, 0);
+  const totalWatchTime   = rows.reduce((s, r) => s + r.watch_time_hours, 0);
 
   return (
-    <Modal open={open} onClose={handleClose} title="Import Doanh Thu từ CSV" width={520}
+    <Modal open={open} onClose={handleClose} title="Import Doanh Thu từ CSV (YouTube Studio)" width={560}
       footer={
         <>
           <Button variant="ghost" size="sm" onClick={handleClose}>Đóng</Button>
@@ -95,64 +145,99 @@ function ImportRevenueModal({ open, onClose, cmsId }: { open: boolean; onClose: 
       }
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Instructions */}
+        <div style={{ fontSize: 12, color: C.textSub, background: C.bgHover, borderRadius: 8, padding: "10px 14px", lineHeight: 1.6 }}>
+          Tải <strong>Table data.csv</strong> từ YouTube Studio → Analytics → Revenue tab.<br />
+          Hỗ trợ header tiếng Việt (Ngày, Số lượt xem, Doanh thu…) và tiếng Anh.
+        </div>
+
         {/* Dropzone */}
-        <div onClick={() => fileRef.current?.click()} style={{
-          border: `2px dashed ${C.border}`, borderRadius: 10, padding: "24px 16px",
-          textAlign: "center", cursor: "pointer", transition: "border-color 0.15s",
-        }}
+        <div onClick={() => fileRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = C.blue; e.currentTarget.style.background = `${C.blue}10`; }}
+          onDragLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = "transparent"; }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.currentTarget.style.borderColor = C.border;
+            e.currentTarget.style.background = "transparent";
+            const file = e.dataTransfer.files[0];
+            if (!file) return;
+            setFileName(file.name);
+            setResult(null);
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+              const { rows: parsed, lifetimeSummary: ls } = parseRevenueCSV(ev.target?.result as string);
+              setRows(parsed);
+              setLifetimeSummary(ls);
+            };
+            reader.readAsText(file, "utf-8");
+          }}
+          style={{
+            border: `2px dashed ${C.border}`, borderRadius: 10, padding: "20px 16px",
+            textAlign: "center", cursor: "pointer", transition: "all 0.15s",
+          }}
           onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.blue)}
           onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.border)}
         >
           <Upload size={24} color={C.textMuted} style={{ margin: "0 auto 8px" }} />
           <div style={{ fontSize: 13, color: C.textSub }}>
-            {fileName ? <strong style={{ color: C.text }}>{fileName}</strong> : "Click để chọn file CSV"}
+            {fileName ? <strong style={{ color: C.text }}>{fileName}</strong> : "Kéo thả hoặc click để chọn Table data.csv"}
           </div>
-          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
-            Format: Date, Views, Estimated partner revenue (USD)
-          </div>
-          <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleFile} />
+          <input ref={fileRef} type="file" accept=".csv,.txt" style={{ display: "none" }} onChange={handleFile} />
         </div>
 
         {/* Preview */}
         {rows.length > 0 && !result && (
           <div>
-            {/* Summary */}
-            <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
-              <div style={{ flex: 1, background: C.bgHover, borderRadius: 8, padding: "10px 14px" }}>
-                <div style={{ fontSize: 11, color: C.textMuted }}>Số ngày</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: C.blue }}>{rows.length}</div>
-              </div>
-              <div style={{ flex: 1, background: C.bgHover, borderRadius: 8, padding: "10px 14px" }}>
-                <div style={{ fontSize: 11, color: C.textMuted }}>Tổng Revenue</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: C.amber }}>{fmtCurrency(totalRevenue)}</div>
-              </div>
-              <div style={{ flex: 1, background: C.bgHover, borderRadius: 8, padding: "10px 14px" }}>
-                <div style={{ fontSize: 11, color: C.textMuted }}>Tổng Views</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: C.cyan }}>{fmt(totalViews)}</div>
-              </div>
+            {/* Summary KPIs from daily rows */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+              {[
+                { label: "Số ngày",       value: `${rows.length}`,                           color: C.blue },
+                { label: "Tổng Revenue",  value: `$${totalRevenue.toFixed(2)}`,               color: C.amber },
+                { label: "Tổng Views",    value: totalViews.toLocaleString("en-US"),           color: C.cyan },
+                { label: "Watch Time (h)",value: totalWatchTime.toLocaleString("en-US", { maximumFractionDigits: 1 }), color: C.purple },
+              ].map((item) => (
+                <div key={item.label} style={{ flex: "1 1 100px", background: C.bgHover, borderRadius: 8, padding: "8px 12px" }}>
+                  <div style={{ fontSize: 11, color: C.textMuted }}>{item.label}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: item.color, marginTop: 2 }}>{item.value}</div>
+                </div>
+              ))}
             </div>
+
+            {/* Lifetime total from "Tổng" row */}
+            {lifetimeSummary && (
+              <div style={{ background: `${C.amber}12`, borderRadius: 8, padding: "8px 14px", marginBottom: 10, fontSize: 12 }}>
+                <div style={{ fontWeight: 600, color: C.amber, marginBottom: 4 }}>Tổng lifetime (từ hàng "Tổng" trong CSV)</div>
+                <div style={{ display: "flex", gap: 20, color: C.textSub }}>
+                  <span>Revenue: <strong style={{ color: C.amber }}>${lifetimeSummary.revenue.toFixed(2)}</strong></span>
+                  <span>Views: <strong style={{ color: C.blue }}>{lifetimeSummary.views.toLocaleString("en-US")}</strong></span>
+                  <span>Watch (h): <strong style={{ color: C.cyan }}>{lifetimeSummary.watch_time_hours.toLocaleString("en-US", { maximumFractionDigits: 1 })}</strong></span>
+                </div>
+              </div>
+            )}
+
             {/* Table preview */}
-            <div style={{ background: C.bgHover, borderRadius: 8, overflow: "auto", maxHeight: 180, fontSize: 12 }}>
+            <div style={{ background: C.bgHover, borderRadius: 8, overflow: "auto", maxHeight: 200, fontSize: 12 }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    {["Ngày","Revenue ($)","Views"].map((h) => (
+                    {["Ngày","Revenue ($)","Views","Watch (h)"].map((h) => (
                       <th key={h} style={{ padding: "6px 12px", textAlign: "left", color: C.textMuted, whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.slice(0, 8).map((r) => (
+                  {rows.slice(0, 10).map((r) => (
                     <tr key={r.snapshot_date} style={{ borderTop: `1px solid ${C.border}` }}>
                       <td style={{ padding: "5px 12px", color: C.text }}>{r.snapshot_date}</td>
-                      <td style={{ padding: "5px 12px", color: C.amber }}>${r.revenue.toFixed(3)}</td>
-                      <td style={{ padding: "5px 12px", color: C.textSub }}>{fmt(r.views)}</td>
+                      <td style={{ padding: "5px 12px", color: C.amber }}>${r.revenue.toFixed(2)}</td>
+                      <td style={{ padding: "5px 12px", color: C.textSub }}>{r.views.toLocaleString("en-US")}</td>
+                      <td style={{ padding: "5px 12px", color: C.textSub }}>{r.watch_time_hours.toLocaleString("en-US", { maximumFractionDigits: 1 })}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {rows.length > 8 && (
-                <div style={{ padding: "5px 12px", color: C.textMuted }}>...và {rows.length - 8} ngày nữa</div>
+              {rows.length > 10 && (
+                <div style={{ padding: "5px 12px", color: C.textMuted }}>...và {rows.length - 10} ngày nữa</div>
               )}
             </div>
           </div>
@@ -199,12 +284,14 @@ export default function CmsHistoryPage() {
     watch_time_hours: Number(r.watch_time_hours ?? 0),
   }));
 
-  const dailyRevenue      = history.reduce((s, r) => s + Number(r.revenue), 0);
-  const dailyViews        = history.reduce((s, r) => s + Number(r.views), 0);
-  const totalRevenue      = periodSummary ? periodSummary.revenue : dailyRevenue;
-  const totalViews        = periodSummary ? periodSummary.views   : dailyViews;
-  const totalWatchTime    = history.reduce((s, r) => s + Number(r.watch_time_hours ?? 0), 0);
-  const hasAnalytics      = history.some((r) => (r.engaged_views ?? 0) > 0 || (r.watch_time_hours ?? 0) > 0);
+  const dailyRevenue   = history.reduce((s, r) => s + Number(r.revenue), 0);
+  const dailyViews     = history.reduce((s, r) => s + Number(r.views), 0);
+  // Always use the UNION sum from daily rows (analytics + CSV merged).
+  // period_summary kept only for the "YT Studio" badge display.
+  const totalRevenue   = dailyRevenue;
+  const totalViews     = dailyViews;
+  const totalWatchTime = history.reduce((s, r) => s + Number(r.watch_time_hours ?? 0), 0);
+  const hasAnalytics   = history.some((r) => (r.engaged_views ?? 0) > 0 || (r.watch_time_hours ?? 0) > 0);
 
   // Số ngày theo period đang chọn (để so với history.length có data thực tế)
   const periodDays = fromDate && toDate
@@ -315,8 +402,8 @@ export default function CmsHistoryPage() {
                 tickFormatter={(v: number) => `${(v/1_000_000).toFixed(1)}M`} />
               <Tooltip contentStyle={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, color: C.text }}
                 formatter={(value: number, name: string) => {
-                  if (name === "Revenue ($)") return [`$${value.toFixed(3)}`, name];
-                  return [fmt(value), name];
+                  if (name === "Revenue ($)") return [`$${value.toFixed(2)}`, name];
+                  return [value.toLocaleString("en-US"), name];
                 }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Line yAxisId="left"  type="monotone" dataKey="revenue" stroke={C.amber} strokeWidth={2} dot={false} name="Revenue ($)" />
@@ -352,7 +439,7 @@ export default function CmsHistoryPage() {
                   <td style={{ padding: "7px 16px", color: C.text }}>{fmt(Number(r.views))}</td>
                   {hasAnalytics && <>
                     <td style={{ padding: "7px 16px", color: C.cyan }}>{fmt(Number(r.engaged_views ?? 0))}</td>
-                    <td style={{ padding: "7px 16px", color: C.textSub }}>{Number(r.watch_time_hours ?? 0).toFixed(1)}</td>
+                    <td style={{ padding: "7px 16px", color: C.textSub }}>{Number(r.watch_time_hours ?? 0).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
                   </>}
                 </tr>
               ))}

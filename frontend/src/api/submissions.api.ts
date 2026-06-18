@@ -47,7 +47,6 @@ export interface SubmissionCreate {
   storage_url?: string;
   category?: string;
   description?: string;
-  category?: string;
 }
 
 interface ListParams {
@@ -90,6 +89,15 @@ export function useCreateSubmission() {
   return useMutation({
     mutationFn: (data: SubmissionCreate) =>
       apiClient.post("submissions", { json: data }).json<Submission>(),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["submissions"] }),
+  });
+}
+
+export function useDeleteSubmission() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete(`submissions/${id}`).json<{ ok: boolean }>(),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["submissions"] }),
   });
 }

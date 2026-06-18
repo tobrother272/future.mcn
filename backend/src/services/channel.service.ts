@@ -17,7 +17,7 @@ export interface Channel {
 }
 
 interface ChannelFilters {
-  cms_id?: string; partner_id?: string; topic_id?: string;
+  cms_id?: string; partner_id?: string; topic_id?: string; content_owner?: string;
   status?: string; monetization?: string; health?: string;
   search?: string;
   min_views?: number; max_views?: number;
@@ -52,6 +52,7 @@ export const ChannelService = {
       vals.push(...filters.partner_ids);
     }
     if (filters.topic_id)   { andClauses.push(`c.topic_id=$${idx++}`);       vals.push(filters.topic_id); }
+    if (filters.content_owner) { andClauses.push(`c.content_owner=$${idx++}`); vals.push(filters.content_owner); }
     if (filters.status)     { andClauses.push(`c.status=$${idx++}`);         vals.push(filters.status); }
     if (filters.monetization){ andClauses.push(`c.monetization=$${idx++}`);  vals.push(filters.monetization); }
     if (filters.health)     { andClauses.push(`c.health=$${idx++}`);         vals.push(filters.health); }
@@ -73,10 +74,12 @@ export const ChannelService = {
     // to avoid ambiguity with c.monthly_revenue from c.*
     const sortBy  = filters.sortBy ?? "name";
     const safeDir = filters.sortDir === "asc" ? "ASC" : "DESC";
-    const allowedCols = ["name","subscribers","monthly_views","created_at","updated_at"];
+    const allowedCols = ["name","subscribers","monthly_views","total_views","last_revenue","created_at","updated_at"];
     let orderExpr: string;
     if (sortBy === "monthly_revenue") {
       orderExpr = `COALESCE(ca_m.monthly_revenue, 0) ${safeDir}`;
+    } else if (sortBy === "last_revenue") {
+      orderExpr = `c.last_revenue ${safeDir}`;
     } else {
       const safeCol = allowedCols.includes(sortBy) ? sortBy : "name";
       orderExpr = `c.${safeCol} ${safeDir}`;
@@ -86,11 +89,13 @@ export const ChannelService = {
     const pagSql = `ORDER BY ${orderExpr} LIMIT $${idx} OFFSET $${idx + 1}`;
     const pagParams = [pageLimit, pageOffset];
 
-    // Subquery to compute monthly revenue from channel_analytics (current month)
+    // Subquery to compute 28-day revenue from channel_analytics
+    // Use CURRENT_DATE - 30 (= 28 + 2) to mirror the analytics endpoint's
+    // date window, which adds +2 to compensate for YouTube's 2-day data lag.
     const caMonthJoin = `LEFT JOIN (
        SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
        FROM channel_analytics
-       WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
+       WHERE date >= CURRENT_DATE - 30 AND date <= CURRENT_DATE - 2
        GROUP BY channel_id
      ) ca_m ON ca_m.channel_id = c.id`;
 
@@ -137,7 +142,7 @@ export const ChannelService = {
        LEFT JOIN (
          SELECT channel_id, COALESCE(SUM(revenue), 0)::float8 AS monthly_revenue
          FROM channel_analytics
-         WHERE date >= DATE_TRUNC('month', CURRENT_DATE)
+         WHERE date >= CURRENT_DATE - 30
            AND date <= CURRENT_DATE - 2
          GROUP BY channel_id
        ) ca_m ON ca_m.channel_id = c.id
@@ -250,7 +255,7 @@ export const ChannelService = {
       }
     }
 
-    const allowed = ["status","monetization","health","cms_id","partner_id","topic_id","is_unlinked","unlinked_at","unlink_reason"];
+    const allowed = ["status","monetization","health","cms_id","partner_id","topic_id","content_owner","is_unlinked","unlinked_at","unlink_reason"];
     const sets: string[] = [];
     const vals: unknown[] = [];
     let idx = 1;

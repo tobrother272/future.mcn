@@ -1,4 +1,4 @@
-﻿import { useState, useRef } from "react";
+import { useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ChevronLeft, Upload, CheckCircle, AlertCircle, Youtube, ExternalLink } from "lucide-react";
 import {
@@ -109,16 +109,31 @@ function ImportVideoModal({ open, onClose, channelId }: { open: boolean; onClose
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {/* Dropzone */}
-        <div onClick={() => fileRef.current?.click()} style={{
-          border: `2px dashed ${C.border}`, borderRadius: 10, padding: "20px 16px",
-          textAlign: "center", cursor: "pointer",
-        }}
+        <div onClick={() => fileRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = C.blue; e.currentTarget.style.background = `${C.blue}10`; }}
+          onDragLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = "transparent"; }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.currentTarget.style.borderColor = C.border;
+            e.currentTarget.style.background = "transparent";
+            const file = e.dataTransfer.files[0];
+            if (!file) return;
+            setFileName(file.name);
+            setResult(null);
+            const reader = new FileReader();
+            reader.onload = (ev) => setRows(parseVideoCSV(ev.target?.result as string));
+            reader.readAsText(file, "utf-8");
+          }}
+          style={{
+            border: `2px dashed ${C.border}`, borderRadius: 10, padding: "20px 16px",
+            textAlign: "center", cursor: "pointer", transition: "all 0.15s",
+          }}
           onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.blue)}
           onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.border)}
         >
           <Upload size={22} color={C.textMuted} style={{ margin: "0 auto 8px" }} />
           <div style={{ fontSize: 13, color: C.textSub }}>
-            {fileName ? <strong style={{ color: C.text }}>{fileName}</strong> : "Click để chọn file CSV"}
+            {fileName ? <strong style={{ color: C.text }}>{fileName}</strong> : "Kéo thả hoặc click để chọn file CSV"}
           </div>
           <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
             Cột: Video title, Video ID, Views, Watch time, Revenue
@@ -252,16 +267,23 @@ export default function ChannelDetailPage() {
       </Button>
 
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+      <div style={{
+        background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 14,
+        padding: "20px 24px", marginBottom: 20,
+        display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16,
+      }}>
+        {/* Left: name + badges */}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
             <Youtube size={20} color={C.red} />
-            <h1 style={{ fontSize: 22, fontWeight: 700, color: C.text }}>{ch.name}</h1>
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: C.text, margin: 0 }}>{ch.name}</h1>
             <StatusDot status={ch.status} />
             <StatusDot status={ch.monetization} />
             {ch.is_unlinked && <Pill color="amber">Unlink</Pill>}
+            {ch.strikes > 0 && <Pill color="red">{ch.strikes} strike{ch.strikes > 1 ? "s" : ""}</Pill>}
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: ch.is_unlinked ? 10 : 0 }}>
             {ch.yt_id && (
               <a href={`https://youtube.com/channel/${ch.yt_id}`} target="_blank" rel="noopener noreferrer"
                 style={{ fontSize: 12, color: C.blue, display: "flex", alignItems: "center", gap: 4 }}>
@@ -269,33 +291,50 @@ export default function ChannelDetailPage() {
               </a>
             )}
             {ch.health && <StatusDot status={ch.health} />}
-            {ch.strikes > 0 && (
-              <Pill color="red">{ch.strikes} strike{ch.strikes > 1 ? "s" : ""}</Pill>
-            )}
           </div>
+
           {ch.is_unlinked && (
-            <div
-              style={{
-                marginTop: 8,
-                fontSize: 12,
-                color: C.amber,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
+            <div style={{ fontSize: 12, color: C.amber, display: "flex", alignItems: "center", gap: 6 }}>
               <AlertCircle size={13} />
               <span>
                 Kênh đã unlink khỏi Studio, hệ thống vẫn giữ lịch sử doanh thu.
-                {ch.unlinked_at ? ` (${fmtDate(ch.unlinked_at)})` : ""}
-                {ch.unlink_reason ? ` · ${ch.unlink_reason}` : ""}
+                {ch.unlinked_at ? ` (CMS ${ch.cms_name ?? ""} - Unlink ngày ${new Date(ch.unlinked_at).toLocaleDateString("vi-VN")})` : ""}
+                {ch.unlink_reason === "manual_unlink" ? " · Bỏ gán thủ công" : ""}
               </span>
             </div>
           )}
         </div>
-        <div style={{ fontSize: 12, color: C.textMuted, textAlign: "right" }}>
-          <div>CMS: <span style={{ color: C.text, fontWeight: 600 }}>{ch.cms_name ?? "—"}</span></div>
-          <div style={{ marginTop: 2 }}>Partner: <span style={{ color: C.text }}>{ch.partner_name ?? "—"}</span></div>
+
+        {/* Right: meta pills */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0, alignItems: "flex-end" }}>
+          {/* CMS */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, color: C.textMuted }}>CMS</span>
+            <span style={{
+              fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 6,
+              background: `${C.amber}18`, color: C.amber, border: `1px solid ${C.amber}33`,
+            }}>{ch.cms_name ?? "—"}</span>
+          </div>
+          {/* Partner */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, color: C.textMuted }}>Partner</span>
+            <span style={{
+              fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: 6,
+              background: ch.partner_name ? `${C.blue}18` : "transparent",
+              color: ch.partner_name ? C.blue : C.textMuted,
+              border: `1px solid ${ch.partner_name ? C.blue + "33" : C.border}`,
+            }}>{ch.partner_name ?? "—"}</span>
+          </div>
+          {/* Content Owner */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, color: C.textMuted }}>Code</span>
+            <span style={{
+              fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: 6,
+              background: ch.content_owner ? `${C.teal}18` : "transparent",
+              color: ch.content_owner ? C.teal : C.textMuted,
+              border: `1px solid ${ch.content_owner ? C.teal + "33" : C.border}`,
+            }}>{ch.content_owner ?? "—"}</span>
+          </div>
         </div>
       </div>
 
@@ -304,7 +343,6 @@ export default function ChannelDetailPage() {
         {[
           { label: "Subscribers",  value: fmt(ch.subscribers),           color: C.purple },
           { label: "Views/tháng",  value: fmt(ch.monthly_views),          color: C.blue },
-          { label: "Revenue/tháng",value: fmtCurrency(ch.monthly_revenue),color: C.amber },
           { label: "Strikes",      value: String(ch.strikes),             color: ch.strikes > 0 ? C.red : C.green },
           { label: "Videos",       value: String(totalVideos),            color: C.cyan },
           { label: `Revenue ${selectedPeriodLabel}`, value: fmtCurrency(totalRevenue), color: C.amber },
@@ -324,10 +362,11 @@ export default function ChannelDetailPage() {
             {displaySummary && analyticsItems.length > 0 && (
               <div style={{ display: "flex", gap: 16, marginTop: 6, alignItems: "center" }}>
                 {[
-                  { label: "Views", value: fmt(displaySummary.total_views), color: C.blue },
-                  { label: "Engaged", value: fmt(displaySummary.total_engaged), color: C.cyan },
-                  { label: "Watch (h)", value: Number(displaySummary.total_watch_hours).toFixed(1), color: C.purple },
-                  { label: "Revenue", value: fmtCurrency(displaySummary.total_revenue), color: C.amber },
+                  { label: "Views",     value: Number(displaySummary.total_views).toLocaleString("en-US"),                                                             color: C.blue },
+                  { label: "Engaged",   value: Number(displaySummary.total_engaged).toLocaleString("en-US"),                                                           color: C.cyan },
+                  { label: "Watch (h)", value: Number(displaySummary.total_watch_hours).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 }), color: C.purple },
+                  { label: "Avg duration", value: displaySummary.avg_view_duration ?? "—",                                                                             color: C.text },
+                  { label: "Revenue",   value: fmtCurrency(displaySummary.total_revenue),                                                                               color: C.amber },
                 ].map(({ label, value, color }) => (
                   <div key={label}>
                     <span style={{ fontSize: 10, color: C.textMuted }}>{label} </span>
@@ -421,7 +460,7 @@ export default function ChannelDetailPage() {
                       <td style={{ padding: "6px 12px", color: C.textSub, whiteSpace: "nowrap" }}>{fmtDate(row.date)}</td>
                       <td style={{ padding: "6px 12px", color: C.blue,    textAlign: "right" }}>{Number(row.views).toLocaleString("en-US")}</td>
                       <td style={{ padding: "6px 12px", color: C.cyan,    textAlign: "right" }}>{Number(row.engaged_views).toLocaleString("en-US")}</td>
-                      <td style={{ padding: "6px 12px", color: C.textSub, textAlign: "right" }}>{Number(row.watch_time_hours).toFixed(1)}</td>
+                      <td style={{ padding: "6px 12px", color: C.textSub, textAlign: "right" }}>{Number(row.watch_time_hours).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
                       <td style={{ padding: "6px 12px", color: C.textSub, textAlign: "right" }}>{row.avg_view_duration ?? "—"}</td>
                       <td style={{ padding: "6px 12px", color: C.amber,   textAlign: "right", fontWeight: 600 }}>{fmtCurrency(row.revenue)}</td>
                     </tr>
@@ -492,7 +531,7 @@ export default function ChannelDetailPage() {
                       </td>
                       <td style={{ padding: "8px 14px", color: C.blue, textAlign: "right" }}>{fmt(v.views)}</td>
                       <td style={{ padding: "8px 14px", color: C.textSub, textAlign: "right" }}>
-                        {Number(v.watch_time_hours).toFixed(1)}
+                        {Number(v.watch_time_hours).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
                       </td>
                       <td style={{ padding: "8px 14px", color: C.textSub }}>{v.avg_view_duration ?? "—"}</td>
                       <td style={{ padding: "8px 14px", color: C.amber, fontWeight: 600, textAlign: "right" }}>

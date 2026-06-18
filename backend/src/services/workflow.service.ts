@@ -139,6 +139,19 @@ export const WorkflowService = {
     }
   },
 
+  async delete(id: string, requesterId: string) {
+    const sub = await queryOne<{ id: string; workflow_state: string; partner_user_id: string | null }>(
+      `SELECT id, workflow_state, partner_user_id FROM submission WHERE id=$1`, [id]
+    );
+    if (!sub) throw new NotFoundError("Không tìm thấy yêu cầu");
+    if (sub.workflow_state !== "SUBMITTED")
+      throw new ValidationError("Chỉ có thể xoá khi trạng thái là Chờ duyệt");
+    if (sub.partner_user_id !== requesterId)
+      throw new ForbiddenError("Bạn không có quyền xoá yêu cầu này");
+    await query(`DELETE FROM submission_log WHERE submission_id=$1`, [id]);
+    await query(`DELETE FROM submission WHERE id=$1`, [id]);
+  },
+
   async getLog(id: string) {
     return queryMany(
       `SELECT * FROM submission_log WHERE submission_id=$1 ORDER BY ts ASC`, [id]

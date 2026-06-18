@@ -52,21 +52,36 @@ const createSchema = z.object({
 });
 
 const listQuerySchema = z.object({
-  cms_id:       z.string().optional(),
-  partner_id:   z.string().optional(),
-  topic_id:     z.string().optional(),
-  status:       z.enum(["Active","Pending","Suspended","Terminated"]).optional(),
-  monetization: z.enum(["On","Off"]).optional(),
-  health:       z.enum(["Healthy","Warning","Critical"]).optional(),
-  search:       z.string().optional(),
-  min_views:    z.coerce.number().optional(),
-  max_views:    z.coerce.number().optional(),
-  min_revenue:  z.coerce.number().optional(),
-  max_revenue:  z.coerce.number().optional(),
-  page:         z.coerce.number().int().positive().default(1),
-  limit:        z.coerce.number().int().positive().max(500).default(50),
-  sortBy:       z.string().optional(),
-  sortDir:      z.enum(["asc","desc"]).default("asc"),
+  cms_id:        z.string().optional(),
+  partner_id:    z.string().optional(),
+  topic_id:      z.string().optional(),
+  content_owner: z.string().optional(),
+  status:        z.enum(["Active","Pending","Suspended","Terminated"]).optional(),
+  monetization:  z.enum(["On","Off"]).optional(),
+  health:        z.enum(["Healthy","Warning","Critical"]).optional(),
+  search:        z.string().optional(),
+  min_views:     z.coerce.number().optional(),
+  max_views:     z.coerce.number().optional(),
+  min_revenue:   z.coerce.number().optional(),
+  max_revenue:   z.coerce.number().optional(),
+  page:          z.coerce.number().int().positive().default(1),
+  limit:         z.coerce.number().int().positive().max(500).default(50),
+  sortBy:        z.string().optional(),
+  sortDir:       z.enum(["asc","desc"]).default("asc"),
+});
+
+// ── Distinct content owners list ─────────────────────────────
+// MUST be before /:id to avoid Express matching "content-owners" as an id param
+router.get("/content-owners", async (req, res, next) => {
+  try {
+    const rows = await queryMany<{ value: string }>(
+      `SELECT DISTINCT content_owner AS value
+       FROM channel
+       WHERE content_owner IS NOT NULL AND content_owner <> ''
+       ORDER BY content_owner ASC`
+    );
+    res.json(rows.map((r) => r.value));
+  } catch(e) { next(e); }
 });
 
 // ── Validate YouTube channel ID via Google API (key rotation on quota) ──
@@ -262,7 +277,7 @@ router.get("/:id/analytics", async (req, res, next) => {
     // preset: mirror YouTube Studio (end = TODAY-2, start = TODAY-(days+1))
     // custom from/to: use exact range
     let rows: Record<string, unknown>[];
-    let summary: { total_views: string; total_engaged: string; total_watch_hours: string; total_revenue: string } | null;
+    let summary: { total_views: string; total_engaged: string; total_watch_hours: string; total_revenue: string; avg_view_duration: string | null } | null;
 
     if (isLifetime) {
       rows = await queryMany(
@@ -277,7 +292,13 @@ router.get("/:id/analytics", async (req, res, next) => {
         `SELECT COALESCE(SUM(views),0)::text AS total_views,
                 COALESCE(SUM(engaged_views),0)::text AS total_engaged,
                 COALESCE(SUM(watch_time_hours),0)::text AS total_watch_hours,
-                COALESCE(SUM(revenue),0)::text AS total_revenue
+                COALESCE(SUM(revenue),0)::text AS total_revenue,
+                CASE WHEN COALESCE(SUM(views),0) > 0
+                     THEN TO_CHAR(
+                       MAKE_INTERVAL(secs => (SUM(watch_time_hours) * 3600 / NULLIF(SUM(views),0))::int),
+                       'MI:SS'
+                     )
+                     ELSE NULL END AS avg_view_duration
          FROM channel_analytics WHERE channel_id = $1`,
         [ch.id]
       );
@@ -285,11 +306,6 @@ router.get("/:id/analytics", async (req, res, next) => {
       const dateFilter = from && to
         ? "date >= $2::date AND date <= $3::date"
         : "date >= CURRENT_DATE - ($2::int) AND date <= CURRENT_DATE - 2";
-      // For preset: pass (days + 1) as the start offset so
-      //   CURRENT_DATE - (days+1) = the correct start date.
-      // Use days+2 as start offset so that regardless of whether the tool
-      // data lag is 2 or 3 days, the LIMIT clause naturally caps to exactly
-      // `days` rows — matching YouTube Studio's "last N days of available data".
       const filterDays = days + 2;
       const limitPlaceholder = from && to ? "$4" : "$3";
       const params = from && to ? [ch.id, from, to, limit] : [ch.id, filterDays, limit];
@@ -310,7 +326,13 @@ router.get("/:id/analytics", async (req, res, next) => {
            COALESCE(SUM(views),0)::text            AS total_views,
            COALESCE(SUM(engaged_views),0)::text    AS total_engaged,
            COALESCE(SUM(watch_time_hours),0)::text AS total_watch_hours,
-           COALESCE(SUM(revenue),0)::text          AS total_revenue
+           COALESCE(SUM(revenue),0)::text          AS total_revenue,
+           CASE WHEN COALESCE(SUM(views),0) > 0
+                THEN TO_CHAR(
+                  MAKE_INTERVAL(secs => (SUM(watch_time_hours) * 3600 / NULLIF(SUM(views),0))::int),
+                  'MI:SS'
+                )
+                ELSE NULL END AS avg_view_duration
          FROM (
            SELECT views, engaged_views, watch_time_hours, revenue
            FROM channel_analytics
@@ -356,6 +378,7 @@ router.get("/:id/analytics", async (req, res, next) => {
         total_engaged:     Number(summary?.total_engaged     ?? 0),
         total_watch_hours: Number(summary?.total_watch_hours ?? 0),
         total_revenue:     Number(summary?.total_revenue     ?? 0),
+        avg_view_duration: summary?.avg_view_duration ?? null,
       },
       period_summary,
       items: rows,

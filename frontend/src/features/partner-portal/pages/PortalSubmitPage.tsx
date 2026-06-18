@@ -1,13 +1,13 @@
 ﻿import { useState, useMemo } from "react";
 import {
   UploadCloud, Plus, Search, RefreshCw, ChevronRight, ChevronDown,
-  Clock, CheckCircle, XCircle, Loader2, Tv2, FileVideo, AlertCircle,
+  Clock, CheckCircle, XCircle, Loader2, Tv2, FileVideo, AlertCircle, Trash2,
 } from "lucide-react";
 import { C, RADIUS, SHADOW } from "@/styles/theme";
 import { Button, Pill } from "@/components/ui";
 import { useAuthStore } from "@/stores/authStore";
 import {
-  useSubmissionList, useCreateSubmission, useSubmissionLog,
+  useSubmissionList, useCreateSubmission, useSubmissionLog, useDeleteSubmission,
   type Submission, type WorkflowState,
 } from "@/api/submissions.api";
 import { useToast } from "@/stores/notificationStore";
@@ -76,8 +76,9 @@ function SubmissionLogPanel({ id }: { id: string }) {
 }
 
 // ── Submission row ────────────────────────────────────────────
-function SubmissionRow({ sub }: { sub: Submission }) {
+function SubmissionRow({ sub, onDelete }: { sub: Submission; onDelete: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
+  const canDelete = sub.workflow_state === "SUBMITTED";
   return (
     <>
       <div
@@ -131,9 +132,27 @@ function SubmissionRow({ sub }: { sub: Submission }) {
         {/* Date */}
         <div style={{ fontSize: 11, color: C.textMuted }}>{new Date(sub.submitted_at).toLocaleDateString("vi-VN")}</div>
 
-        {/* Expand */}
-        <div style={{ display: "flex", justifyContent: "center", color: C.textMuted }}>
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        {/* Actions */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+          {canDelete && (
+            <button
+              title="Xoá yêu cầu"
+              onClick={(e) => { e.stopPropagation(); onDelete(sub.id); }}
+              style={{
+                background: "transparent", border: "none", cursor: "pointer",
+                padding: 4, borderRadius: 4, color: C.red,
+                display: "flex", alignItems: "center",
+                transition: "background .12s",
+              }}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = `${C.red}18`)}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = "transparent")}
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
+          <div style={{ color: C.textMuted }}>
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </div>
         </div>
       </div>
 
@@ -316,6 +335,8 @@ const STATE_TABS: { label: string; value: WorkflowState | "" }[] = [
 export default function PortalSubmitPage() {
   const user      = useAuthStore((s) => s.user);
   const partnerId = user?.userType === "partner" ? (user.partner_id ?? "") : "";
+  const toast     = useToast();
+  const deleteMut = useDeleteSubmission();
 
   const [search,   setSearch]   = useState("");
   const [stateTab, setStateTab] = useState<WorkflowState | "">("");
@@ -323,23 +344,38 @@ export default function PortalSubmitPage() {
 
   const { data, isLoading, refetch } = useSubmissionList({
     partner_id: partnerId || undefined,
-    state:      stateTab || undefined,
     search:     search   || undefined,
-    limit: 100,
+    limit: 200,
   });
-  const items = data?.items ?? [];
-  const total = data?.total ?? 0;
+
+  const allItems  = data?.items ?? [];
+  const items     = stateTab ? allItems.filter((s) => s.workflow_state === stateTab) : allItems;
+  const total     = items.length;
+
+  // counts per state for tab badges
+  const stateCounts = useMemo(() => {
+    const counts: Partial<Record<WorkflowState | "", number>> = { "": allItems.length };
+    for (const s of allItems) counts[s.workflow_state] = (counts[s.workflow_state] ?? 0) + 1;
+    return counts;
+  }, [allItems]);
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("Xoá yêu cầu này?")) return;
+    try {
+      await deleteMut.mutateAsync(id);
+      toast.success("Đã xoá", "Yêu cầu đã được xoá thành công");
+    } catch {
+      toast.error("Thất bại", "Không thể xoá yêu cầu");
+    }
+  };
 
   // KPI counts
-  const kpiCounts = useMemo(() => {
-    const base = data?.items ?? [];
-    return {
-      pending:  base.filter((s) => s.workflow_state === "SUBMITTED").length,
-      reviewing: base.filter((s) => s.workflow_state === "QC_REVIEWING").length,
-      approved: base.filter((s) => s.workflow_state === "QC_APPROVED").length,
-      active:   base.filter((s) => s.workflow_state === "ACTIVE").length,
-    };
-  }, [data]);
+  const kpiCounts = useMemo(() => ({
+    pending:   allItems.filter((s) => s.workflow_state === "SUBMITTED").length,
+    reviewing: allItems.filter((s) => s.workflow_state === "QC_REVIEWING").length,
+    approved:  allItems.filter((s) => s.workflow_state === "QC_APPROVED").length,
+    active:    allItems.filter((s) => s.workflow_state === "ACTIVE").length,
+  }), [allItems]);
 
   return (
     <div style={{ padding: "24px 28px" }}>
@@ -379,18 +415,33 @@ export default function PortalSubmitPage() {
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
         {/* State tabs */}
         <div style={{ display: "flex", gap: 4, background: C.bgCard, borderRadius: RADIUS.sm, border: `1px solid ${C.border}`, padding: 3 }}>
-          {STATE_TABS.map(({ label, value }) => (
+        {STATE_TABS.map(({ label, value }) => {
+            const count = stateCounts[value] ?? 0;
+            const active = stateTab === value;
+            return (
             <button
               key={value}
               onClick={() => setStateTab(value)}
               style={{
                 padding: "5px 12px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 12,
-                background: stateTab === value ? C.blue : "transparent",
-                color: stateTab === value ? "#fff" : C.textSub,
-                transition: "all .15s", fontWeight: stateTab === value ? 600 : 400,
+                background: active ? C.blue : "transparent",
+                color: active ? "#fff" : C.textSub,
+                transition: "all .15s", fontWeight: active ? 600 : 400,
+                display: "flex", alignItems: "center", gap: 5,
               }}
-            >{label}</button>
-          ))}
+            >
+              {label}
+              {count > 0 && (
+                <span style={{
+                  fontSize: 10, fontWeight: 700,
+                  background: active ? "rgba(255,255,255,0.25)" : `${C.blue}22`,
+                  color: active ? "#fff" : C.blue,
+                  borderRadius: 10, padding: "1px 6px", lineHeight: "16px",
+                }}>{count}</span>
+              )}
+            </button>
+            );
+          })}
         </div>
 
         {/* Search */}
@@ -434,7 +485,7 @@ export default function PortalSubmitPage() {
             <Button variant="primary" icon={<Plus size={14} />} onClick={() => setShowModal(true)}>Gửi demo / mời kênh</Button>
           </div>
         ) : (
-          items.map((sub) => <SubmissionRow key={sub.id} sub={sub} />)
+          items.map((sub) => <SubmissionRow key={sub.id} sub={sub} onDelete={(id) => void handleDelete(id)} />)
         )}
       </div>
 
