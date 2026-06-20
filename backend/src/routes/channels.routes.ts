@@ -6,7 +6,7 @@ import { validate } from "../middleware/validate.js";
 import { requireAuth } from "../middleware/auth.js";
 import { auditLogger } from "../middleware/audit.js";
 import { queryMany, queryOne } from "../db/helpers.js";
-import { NotFoundError, UnauthorizedError } from "../lib/errors.js";
+import { NotFoundError, UnauthorizedError, ForbiddenError } from "../lib/errors.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -19,17 +19,17 @@ router.use(auditLogger("channel"));
 async function assertChannelAccessible(req: { user?: { userType?: string; partner_id?: string | null } }, channelId: string) {
   if (req.user?.userType !== "partner") return;
   const myPartnerId = req.user.partner_id;
-  if (!myPartnerId) throw new UnauthorizedError("Partner user thiếu partner_id");
+  if (!myPartnerId) throw new ForbiddenError("Partner user thiếu partner_id");
   const ch = await queryOne<{ partner_id: string | null }>(
     `SELECT partner_id FROM channel WHERE id=$1`, [channelId]
   );
   if (!ch) throw new NotFoundError(`Channel ${channelId} not found`);
-  if (!ch.partner_id) throw new UnauthorizedError("Channel chưa gán partner");
+  if (!ch.partner_id) throw new ForbiddenError("Channel chưa gán partner");
   const owned = await queryOne<{ ok: boolean }>(
     `SELECT (id = $1 OR parent_id = $1) AS ok FROM partner WHERE id = $2`,
     [myPartnerId, ch.partner_id]
   );
-  if (!owned?.ok) throw new UnauthorizedError("Bạn không có quyền xem channel này");
+  if (!owned?.ok) throw new ForbiddenError("Bạn không có quyền xem channel này");
 }
 
 const createSchema = z.object({
@@ -202,6 +202,23 @@ router.get("/:id", async (req, res, next) => {
   try {
     await assertChannelAccessible(req, req.params.id);
     res.json(await ChannelService.getById(req.params.id));
+  } catch(e) { next(e); }
+});
+
+router.get("/:id/credentials", async (req, res, next) => {
+  try {
+    await assertChannelAccessible(req, req.params.id!);
+    const ch = await ChannelService.getById(req.params.id!) as unknown as Record<string, unknown>;
+    const email = (ch.email_access as string | null) ?? null;
+    const enc   = (ch.password_enc as string | null) ?? null;
+    let password: string | null = null;
+    if (enc) {
+      try {
+        const { decryptCredential } = await import("../lib/crypto.js");
+        password = decryptCredential(enc);
+      } catch { password = null; }
+    }
+    res.json({ email_access: email, password });
   } catch(e) { next(e); }
 });
 

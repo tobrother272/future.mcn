@@ -1,13 +1,14 @@
 import { useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronLeft, Upload, CheckCircle, AlertCircle, Youtube, ExternalLink } from "lucide-react";
+import { ChevronLeft, Upload, CheckCircle, AlertCircle, Youtube, ExternalLink, Eye, EyeOff } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
 } from "recharts";
 import { C } from "@/styles/theme";
 import { Button, Card, Pill, StatusDot, Modal, EmptyState } from "@/components/ui";
-import { useChannel, useChannelVideos, useImportChannelVideos, useChannelAnalytics } from "@/api/channels.api";
+import { useChannel, useChannelVideos, useImportChannelVideos, useChannelAnalytics, useChannelCredentials } from "@/api/channels.api";
+import { useAuthStore } from "@/stores/authStore";
 import { useToast } from "@/stores/notificationStore";
 import { fmt, fmtCurrency, fmtDate } from "@/lib/format";
 import { PERIOD_OPTIONS, periodToParams, todayInputDate, type PeriodKey } from "@/lib/periods";
@@ -233,6 +234,10 @@ export default function ChannelDetailPage() {
     limit: VIDEO_LIMIT,
     offset: videoPage * VIDEO_LIMIT,
   });
+  const user = useAuthStore((s) => s.user);
+  const isEmployee = user?.userType === "employee";
+  const { data: creds } = useChannelCredentials(isEmployee ? (id ?? "") : "");
+  const [showPassword, setShowPassword] = useState(false);
 
   if (isLoading) return <div style={{ padding: 24, color: C.textSub }}>Đang tải...</div>;
   if (!ch) return <div style={{ padding: 24, color: C.red }}>Kênh không tồn tại</div>;
@@ -353,6 +358,37 @@ export default function ChannelDetailPage() {
           </Card>
         ))}
       </div>
+
+      {/* Credentials (employee only) */}
+      {isEmployee && (creds?.email_access || creds?.password) && (
+        <div style={{
+          background: `${C.amber}0d`, border: `1px solid ${C.amber}30`, borderRadius: 10,
+          padding: "12px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap",
+        }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, textTransform: "uppercase", flexShrink: 0 }}>Thông tin truy cập</span>
+          {creds.email_access && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 11, color: C.textMuted }}>Mail:</span>
+              <span style={{ fontSize: 12, color: C.text, fontFamily: "monospace" }}>{creds.email_access}</span>
+            </div>
+          )}
+          {creds.password && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 11, color: C.textMuted }}>Password:</span>
+              <span style={{ fontSize: 12, color: C.text, fontFamily: "monospace", letterSpacing: showPassword ? 0 : 2 }}>
+                {showPassword ? creds.password : "•".repeat(Math.min(creds.password.length, 12))}
+              </span>
+              <button
+                onClick={() => setShowPassword((v) => !v)}
+                style={{ background: "none", border: "none", cursor: "pointer", padding: 2, color: C.textMuted, display: "flex" }}
+              >
+                {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
+            </div>
+          )}
+          <span style={{ fontSize: 10, color: C.textMuted, marginLeft: "auto" }}>Đối tác sẽ tự đổi sau khi nhận kênh</span>
+        </div>
+      )}
 
       {/* Analytics Chart + Table */}
       <Card padding="20px" style={{ marginBottom: 20 }}>

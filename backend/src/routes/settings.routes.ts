@@ -35,4 +35,28 @@ router.delete("/:key", async (req, res, next) => {
   } catch(e) { next(e); }
 });
 
+// ── Manual Google Sheets export trigger ──────────────────────
+router.post("/sheets-export/trigger", async (_req, res, next) => {
+  try {
+    // Read credentials from DB settings (override env vars if set)
+    const rows = await queryMany<{ key: string; value: unknown }>(
+      `SELECT key, value FROM setting WHERE key IN ('sheets_service_account_email','sheets_private_key','sheets_sheet_id')`
+    );
+    const byKey = Object.fromEntries(rows.map(r => [r.key, r.value as string]));
+    const creds = (byKey.sheets_service_account_email && byKey.sheets_private_key && byKey.sheets_sheet_id)
+      ? { email: byKey.sheets_service_account_email, privateKey: byKey.sheets_private_key, sheetId: byKey.sheets_sheet_id }
+      : undefined;
+
+    const { exportChannelsToSheet } = await import("../services/sheets.service.js");
+    const result = await exportChannelsToSheet(creds);
+    // Update last export time in settings
+    await queryOne(
+      `INSERT INTO setting (key, value, updated_at) VALUES ('sheets_last_export', $1::jsonb, now())
+       ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = now()`,
+      [JSON.stringify({ written: result.written, ts: new Date().toISOString() })]
+    );
+    res.json({ ok: true, written: result.written });
+  } catch(e) { next(e); }
+});
+
 export { router as settingsRouter };

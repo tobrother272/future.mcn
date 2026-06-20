@@ -109,22 +109,43 @@ export const WorkflowService = {
   },
 
   /** Provision: create channel + set submission ACTIVE */
-  async provision(submissionId: string, by: { id: string; email: string; role: string }, channelData: { ytId?: string; cmsId?: string; topicId?: string; name?: string; partnerId?: string }) {
+  async provision(submissionId: string, by: { id: string; email: string; role: string }, channelData: { ytId?: string; cmsId?: string; topicId?: string; name?: string; partnerId?: string; emailAccess?: string; password?: string }) {
     const sub = await WorkflowService.getById(submissionId);
-    if (sub.workflow_state !== "QC_APPROVED") {
-      throw new ForbiddenError("Submission must be QC_APPROVED before provisioning");
+    if (sub.workflow_state !== "QC_APPROVED" && sub.workflow_state !== "PROVISIONING_FAILED") {
+      throw new ForbiddenError("Submission must be QC_APPROVED or PROVISIONING_FAILED before provisioning");
     }
     await WorkflowService.transition(submissionId, "CHANNEL_PROVISIONING", by);
 
     try {
+      // Auto-derive partner_id from submitter's account if not explicitly provided
+      let partnerId = channelData.partnerId;
+      if (!partnerId && sub.partner_user_id) {
+        const acc = await queryOne<{ partner_id: string | null }>(
+          `SELECT partner_id FROM account WHERE id=$1`, [sub.partner_user_id]
+        );
+        partnerId = acc?.partner_id ?? undefined;
+      }
+
+      // Encrypt password if provided
+      let passwordEnc: string | undefined;
+      if (channelData.password) {
+        const secret = process.env.CHANNEL_CRED_SECRET;
+        if (secret && secret.length === 64) {
+          const { encryptCredential } = await import("../lib/crypto.js");
+          passwordEnc = encryptCredential(channelData.password);
+        }
+      }
+
       const channel = await ChannelService.create({
-        cms_id: channelData.cmsId,
-        partner_id: channelData.partnerId,
-        topic_id: channelData.topicId,
-        yt_id: channelData.ytId,
-        name: channelData.name ?? sub.video_title,
-        status: "Active",
-        monetization: "Pending",
+        cms_id:       channelData.cmsId,
+        partner_id:   partnerId,
+        topic_id:     channelData.topicId,
+        yt_id:        channelData.ytId,
+        name:         channelData.name ?? sub.video_title,
+        status:       "Active",
+        monetization: "Off",
+        email_access: channelData.emailAccess,
+        password_enc: passwordEnc,
       });
       await query(
         `UPDATE submission SET channel_id=$1 WHERE id=$2`, [channel.id, submissionId]

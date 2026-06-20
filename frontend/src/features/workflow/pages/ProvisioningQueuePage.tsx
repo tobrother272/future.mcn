@@ -31,6 +31,8 @@ function ProvisionForm({ sub, onDone }: { sub: Submission; onDone: () => void })
   );
   const [ytId,       setYtId]       = useState("");
   const [channelName, setChannelName] = useState(sub.video_title);
+  const [emailAccess, setEmailAccess] = useState("");
+  const [password,    setPassword]    = useState("");
 
   const { data: topics = [] } = useTopics();
 
@@ -40,11 +42,13 @@ function ProvisionForm({ sub, onDone }: { sub: Submission; onDone: () => void })
       const result = await provision.mutateAsync({
         id: sub.id,
         channelData: {
-          cmsId:     selectedCmsId,
-          topicId:   topicId   || undefined,
-          partnerId: partnerId || undefined,
-          ytId:      ytId      || undefined,
-          name:      channelName || sub.video_title,
+          cmsId:       selectedCmsId,
+          topicId:     topicId      || undefined,
+          partnerId:   partnerId    || undefined,
+          ytId:        ytId         || undefined,
+          name:        channelName  || sub.video_title,
+          emailAccess: emailAccess  || undefined,
+          password:    password     || undefined,
         },
       });
       toast.success("Cấp kênh thành công!", `Kênh ${result.channel.name} đã được tạo`);
@@ -101,7 +105,17 @@ function ProvisionForm({ sub, onDone }: { sub: Submission; onDone: () => void })
           <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>YouTube Channel ID</label>
           <input value={ytId} onChange={(e) => setYtId(e.target.value)} placeholder="UC..." style={inputStyle} />
         </div>
-        {/* Preview summary */}
+        {/* Email access */}
+        <div>
+          <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>Truy cập mail</label>
+          <input value={emailAccess} onChange={(e) => setEmailAccess(e.target.value)} placeholder="email@gmail.com" style={inputStyle} />
+        </div>
+        {/* Password */}
+        <div>
+          <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>Password</label>
+          <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mật khẩu ban đầu" style={inputStyle} type="text" autoComplete="off" />
+        </div>
+        {/* Action */}
         <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
           <Button
             variant="primary"

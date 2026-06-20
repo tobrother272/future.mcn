@@ -90,3 +90,12 @@ export function useHealthCheck() {
     refetchInterval: 30_000,
   });
 }
+
+// ── Google Sheets export ──────────────────────────────────────
+export function useTriggerSheetsExport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiClient.post("settings/sheets-export/trigger").json<{ ok: boolean; written: number }>(),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["settings"] }),
+  });
+}
