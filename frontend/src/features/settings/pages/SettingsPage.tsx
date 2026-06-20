@@ -1,9 +1,9 @@
-﻿import { useState, useMemo } from "react";
+﻿import React, { useState, useMemo } from "react";
 import {
   Users, ClipboardList, Settings2, Plus, Search,
   Shield, RefreshCw, Edit2, Check, X, Eye, EyeOff,
   Activity, Server, Database, Clock, ChevronLeft, ChevronRight,
-  Trash2, AlertTriangle, Key,
+  Trash2, AlertTriangle, Key, Table2, Upload, ToggleLeft, ToggleRight,
 } from "lucide-react";
 import { C, RADIUS, SHADOW } from "@/styles/theme";
 import { Button, Pill } from "@/components/ui";
@@ -12,6 +12,7 @@ import { useToast } from "@/stores/notificationStore";
 import {
   useInternalUsers, useCreateInternalUser, useUpdateInternalUser,
   useAuditLog, useSettings, useSetSetting, useDeleteSetting, useHealthCheck,
+  useTriggerSheetsExport,
 } from "@/api/settings.api";
 import { useChangePassword } from "@/api/auth.api";
 import type { InternalUser, InternalRole } from "@/types/user";
@@ -502,6 +503,223 @@ function GoogleApiKeyCard() {
 }
 
 // ═══════════════════════════════════════════════════════
+// ─── Test interval row (inside GoogleSheetsCard) ─────────────
+
+// ─── Google Sheets Integration Card ──────────────────────────
+function GoogleSheetsCard() {
+  const { data: settings = [] } = useSettings();
+  const setSetting    = useSetSetting();
+  const triggerExport = useTriggerSheetsExport();
+  const toast = useToast();
+
+  const get = (key: string) => (settings.find(s => s.key === key)?.value ?? "") as string;
+
+  const enabledRow = settings.find(s => s.key === "sheets_export_enabled");
+  const lastExport = settings.find(s => s.key === "sheets_last_export");
+  const isEnabled  = enabledRow === undefined || enabledRow.value !== false;
+  const lastInfo   = lastExport?.value as { written?: number; ts?: string } | undefined;
+
+  const [email,    setEmail]    = useState("");
+  const [privKey,  setPrivKey]  = useState("");
+  const [sheetId,  setSheetId]  = useState("");
+  const [editKey,  setEditKey]  = useState(false);
+  const [saving,   setSaving]   = useState(false);
+  // Populate fields when settings load
+  const emailSaved   = get("sheets_service_account_email");
+  const privKeySaved = get("sheets_private_key");
+  const sheetIdSaved = get("sheets_sheet_id");
+
+  // Initialize from saved values (only once when data loads)
+  const initialized = React.useRef(false);
+  React.useEffect(() => {
+    if (!initialized.current && settings.length > 0) {
+      initialized.current = true;
+      if (emailSaved)   setEmail(emailSaved);
+      if (privKeySaved) setPrivKey(privKeySaved);
+      if (sheetIdSaved) setSheetId(sheetIdSaved);
+    }
+  }, [settings.length, emailSaved, privKeySaved, sheetIdSaved]);
+
+  const hasCredentials = !!(emailSaved && privKeySaved && sheetIdSaved);
+
+  const handleToggle = async () => {
+    try {
+      await setSetting.mutateAsync({ key: "sheets_export_enabled", value: !isEnabled });
+      toast.success(isEnabled ? "Đã tắt" : "Đã bật", "Tự động xuất Google Sheets " + (!isEnabled ? "bật" : "tắt"));
+    } catch { toast.error("Lỗi", "Không lưu được cài đặt"); }
+  };
+
+  const handleSaveCreds = async () => {
+    if (!email.trim() || !privKey.trim() || !sheetId.trim()) {
+      toast.warning("Thiếu thông tin", "Nhập đủ 3 thông tin Google"); return;
+    }
+    setSaving(true);
+    try {
+      await setSetting.mutateAsync({ key: "sheets_service_account_email", value: email.trim() });
+      await setSetting.mutateAsync({ key: "sheets_private_key",           value: privKey.trim() });
+      await setSetting.mutateAsync({ key: "sheets_sheet_id",              value: sheetId.trim() });
+      toast.success("Đã lưu", "Cấu hình Google Sheets đã được lưu");
+      setEditKey(false);
+    } catch { toast.error("Lỗi", "Không lưu được cấu hình"); }
+    finally { setSaving(false); }
+  };
+
+  const handleTrigger = async () => {
+    try {
+      const res = await triggerExport.mutateAsync();
+      toast.success("Xuất thành công", `Đã ghi ${res.written} kênh lên Google Sheets`);
+    } catch (err) {
+      toast.error("Xuất thất bại", err instanceof Error ? err.message : "Kiểm tra Google credentials");
+    }
+  };
+
+  const inp: React.CSSProperties = {
+    width: "100%", padding: "7px 10px",
+    background: C.bgInput, border: `1px solid ${C.border}`,
+    borderRadius: RADIUS.sm, color: C.text, fontSize: 12,
+    outline: "none", boxSizing: "border-box",
+  };
+  const lbl: React.CSSProperties = { fontSize: 11, color: C.textMuted, marginBottom: 4, display: "block" };
+
+  return (
+    <div style={{ background: C.bgCard, borderRadius: RADIUS.md, border: `1px solid ${C.border}`, overflow: "hidden", boxShadow: SHADOW.sm }}>
+      {/* Header */}
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+        <Table2 size={14} color={C.green} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.text, flex: 1 }}>Google Sheets Export</span>
+        {hasCredentials && (
+          <span style={{ fontSize: 10, color: C.green, background: `${C.green}15`, padding: "2px 8px", borderRadius: 10, fontWeight: 600 }}>
+            ✓ Đã cấu hình
+          </span>
+        )}
+      </div>
+
+      <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* Toggle */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>Tự động xuất lúc 5:00 sáng</div>
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>Chạy hằng ngày nếu đã cấu hình thông tin bên dưới</div>
+          </div>
+          <button
+            onClick={() => void handleToggle()}
+            disabled={setSetting.isPending}
+            style={{ background: "none", border: "none", cursor: "pointer", color: isEnabled ? C.green : C.textMuted, display: "flex", padding: 2 }}
+            title={isEnabled ? "Đang bật — click để tắt" : "Đang tắt — click để bật"}
+          >
+            {isEnabled ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
+          </button>
+        </div>
+
+        {/* Last export info */}
+        {lastInfo?.ts && (
+          <div style={{ fontSize: 11, color: C.textMuted, padding: "7px 10px", background: `${C.bgPage}cc`, borderRadius: RADIUS.sm, border: `1px solid ${C.border}` }}>
+            <span style={{ color: C.textSub }}>Lần cuối: </span>
+            <span style={{ color: C.teal, fontWeight: 500 }}>
+              {new Date(lastInfo.ts).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+            </span>
+            {lastInfo.written !== undefined && <span> — {lastInfo.written} kênh</span>}
+          </div>
+        )}
+
+        {/* Credentials form */}
+        <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: C.textSub, marginBottom: 10 }}>Thông tin kết nối Google</div>
+
+          <div style={{ marginBottom: 10 }}>
+            <label style={lbl}>Service Account Email</label>
+            <input
+              value={email} onChange={e => setEmail(e.target.value)}
+              placeholder="your-service@project.iam.gserviceaccount.com"
+              style={inp}
+            />
+          </div>
+
+          <div style={{ marginBottom: 10 }}>
+            <label style={lbl}>Private Key</label>
+            {privKeySaved && !editKey ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8,
+                padding: "7px 10px", background: C.bgInput, border: `1px solid ${C.border}`,
+                borderRadius: RADIUS.sm }}>
+                <span style={{ fontSize: 11, color: C.green, flex: 1 }}>
+                  ✓ Đã lưu — <span style={{ fontFamily: "monospace", color: C.textMuted }}>
+                    {privKeySaved.slice(0, 28)}...{privKeySaved.slice(-12)}
+                  </span>
+                </span>
+                <button onClick={() => setEditKey(true)}
+                  style={{ fontSize: 11, color: C.blue, background: "none", border: "none",
+                    cursor: "pointer", padding: "2px 6px", borderRadius: 4,
+                    whiteSpace: "nowrap" }}>
+                  Đổi key
+                </button>
+              </div>
+            ) : (
+              <div style={{ position: "relative" }}>
+                <textarea
+                  value={privKey} onChange={e => setPrivKey(e.target.value)}
+                  placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"}
+                  rows={4}
+                  autoFocus={editKey}
+                  style={{ ...inp, resize: "none", fontFamily: "monospace", fontSize: 11 }}
+                />
+                {editKey && (
+                  <button onClick={() => { setEditKey(false); setPrivKey(privKeySaved); }}
+                    style={{ position: "absolute", top: 6, right: 8, background: "none",
+                      border: "none", cursor: "pointer", color: C.textMuted, display: "flex" }}
+                    title="Hủy">
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <label style={lbl}>Google Sheet ID</label>
+            <input
+              value={sheetId} onChange={e => setSheetId(e.target.value)}
+              placeholder="Lấy từ URL: /spreadsheets/d/[SHEET_ID]/edit"
+              style={inp}
+            />
+          </div>
+
+          <Button
+            variant="ghost" size="sm"
+            icon={saving ? <RefreshCw size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Check size={13} />}
+            loading={saving}
+            onClick={() => void handleSaveCreds()}
+          >
+            Lưu cấu hình
+          </Button>
+        </div>
+
+        {/* Manual trigger button */}
+        <button
+          onClick={() => void handleTrigger()}
+          disabled={triggerExport.isPending || !hasCredentials}
+          title={!hasCredentials ? "Điền thông tin Google trước" : undefined}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+            padding: "9px 14px", borderRadius: RADIUS.sm,
+            border: `1px solid ${hasCredentials ? C.green + "40" : C.border}`,
+            background: !hasCredentials ? `${C.bgPage}` : triggerExport.isPending ? `${C.green}10` : `${C.green}15`,
+            color: hasCredentials ? C.green : C.textMuted,
+            fontSize: 13, fontWeight: 600,
+            cursor: (triggerExport.isPending || !hasCredentials) ? "default" : "pointer",
+            transition: "background .15s",
+            opacity: hasCredentials ? 1 : 0.5,
+          }}
+        >
+          {triggerExport.isPending
+            ? <><RefreshCw size={13} style={{ animation: "spin 1s linear infinite" }} /> Đang xuất...</>
+            : <><Upload size={13} /> Xuất ngay lên Google Sheets</>
+          }
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // TAB 3: System Info
 // ═══════════════════════════════════════════════════════
 
@@ -578,6 +796,11 @@ function SystemTab() {
             <ChangePasswordInline />
           </div>
         </div>
+
+        {/* Google Sheets */}
+        <div style={{ marginTop: 16 }}>
+          <GoogleSheetsCard />
+        </div>
       </div>
 
       {/* Settings key-value */}
@@ -603,11 +826,11 @@ function SystemTab() {
           {/* List */}
           {sLoading ? (
             <div style={{ color: C.textMuted, fontSize: 13 }}>Đang tải...</div>
-          ) : settings.filter((s) => s.key !== "GOOGLE_API_KEY").length === 0 ? (
+          ) : settings.filter((s) => s.key !== "GOOGLE_API_KEY" && !s.key.startsWith("sheets_")).length === 0 ? (
             <div style={{ color: C.textMuted, fontSize: 12, textAlign: "center", padding: "16px 0" }}>Chưa có cài đặt nào</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {settings.filter((s) => s.key !== "GOOGLE_API_KEY").map((s) => (
+              {settings.filter((s) => s.key !== "GOOGLE_API_KEY" && !s.key.startsWith("sheets_")).map((s) => (
                 <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", background: C.bg, borderRadius: RADIUS.sm, border: `1px solid ${C.border}` }}>
                   <code style={{ fontSize: 11, color: C.blue, minWidth: 120, flexShrink: 0 }}>{s.key}</code>
                   {editKey === s.key ? (

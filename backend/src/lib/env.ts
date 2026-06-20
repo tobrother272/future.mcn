@@ -14,6 +14,8 @@ const envSchema = z.object({
   GOOGLE_SERVICE_ACCOUNT_EMAIL: z.string().optional(),
   GOOGLE_PRIVATE_KEY:           z.string().optional(),
   GOOGLE_SHEET_ID:              z.string().optional(),
+  // Channel credentials encryption (AES-256-GCM, 64-char hex = 32 bytes)
+  CHANNEL_CRED_SECRET: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

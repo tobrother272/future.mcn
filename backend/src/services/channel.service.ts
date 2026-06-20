@@ -159,12 +159,15 @@ export const ChannelService = {
     subscribers?: number; monthly_views?: number; total_views?: number; video?: number; monthly_revenue?: number;
     link_date?: string | null;
     metadata?: Record<string, unknown>;
+    email_access?: string;
+    password_enc?: string;
   }) {
     const id = nanoid("C");
     const ch = await queryOne<Channel>(
       `INSERT INTO channel (id,cms_id,partner_id,topic_id,yt_id,name,country,status,monetization,
-         subscribers,monthly_views,total_views,video,monthly_revenue,link_date,notes,metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+         subscribers,monthly_views,total_views,video,monthly_revenue,link_date,notes,metadata,
+         email_access,password_enc)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
       [
         id, data.cms_id ?? null, data.partner_id ?? null, data.topic_id ?? null,
         data.yt_id?.trim() || null, data.name, data.country ?? "VN",
@@ -172,6 +175,7 @@ export const ChannelService = {
         data.subscribers ?? 0, data.monthly_views ?? 0, data.total_views ?? 0,
         data.video ?? 0, data.monthly_revenue ?? 0, data.link_date ?? null,
         data.notes ?? null, JSON.stringify(data.metadata ?? {}),
+        data.email_access ?? null, data.password_enc ?? null,
       ]
     );
     return ch!;

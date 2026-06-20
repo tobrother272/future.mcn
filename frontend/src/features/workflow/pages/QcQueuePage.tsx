@@ -1,8 +1,9 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import {
   ClipboardCheck, Search, RefreshCw, ChevronDown, ChevronRight,
   Clock, CheckCircle, XCircle, Eye, ExternalLink,
   User2, Building2, FileVideo, Tv, RotateCcw, Zap,
+  KeyRound, Copy, Check, EyeOff,
 } from "lucide-react";
 import { C, RADIUS, SHADOW } from "@/styles/theme";
 import { Button, Pill } from "@/components/ui";
@@ -11,18 +12,65 @@ import {
   type Submission, type WorkflowState,
 } from "@/api/submissions.api";
 import { useCmsList } from "@/api/cms.api";
+import { useChannelCredentials } from "@/api/channels.api";
 import { useToast } from "@/stores/notificationStore";
 
+// ── Channel credentials (admin view) ─────────────────────────
+function CredRow({ label, value, secret }: { label: string; value: string; secret?: boolean }) {
+  const [show, setShow]     = useState(!secret);
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    void navigator.clipboard.writeText(value).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 1800);
+    });
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 8 }}>
+      <span style={{ fontSize: 11, color: C.textMuted, width: 72, flexShrink: 0, fontWeight: 500 }}>{label}</span>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", background: `${C.bgPage}e0`, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, overflow: "hidden" }}>
+        <span style={{ flex: 1, padding: "5px 10px", fontSize: 12, color: C.text, fontFamily: "monospace", letterSpacing: secret && !show ? "4px" : "normal" }}>
+          {secret && !show ? "••••••••••••" : value}
+        </span>
+        {secret && (
+          <button onClick={() => setShow(v => !v)} title={show ? "Ẩn" : "Hiện"}
+            style={{ background: "transparent", border: "none", borderLeft: `1px solid ${C.border}`, cursor: "pointer", padding: "5px 7px", color: C.textMuted, display: "flex" }}>
+            {show ? <EyeOff size={12} /> : <Eye size={12} />}
+          </button>
+        )}
+        <button onClick={handleCopy} title="Sao chép"
+          style={{ background: copied ? `${C.teal}18` : "transparent", border: "none", borderLeft: `1px solid ${C.border}`, cursor: "pointer", padding: "5px 7px", color: copied ? C.teal : C.textMuted, display: "flex" }}>
+          {copied ? <Check size={11} /> : <Copy size={11} />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ChannelCredBox({ channelId }: { channelId: string }) {
+  const { data, isLoading, isError } = useChannelCredentials(channelId);
+  if (isLoading) return <div style={{ fontSize: 11, color: C.textMuted }}>Đang tải...</div>;
+  if (isError || (!data?.email_access && !data?.password)) return null;
+  return (
+    <div style={{ marginTop: 12, background: `${C.teal}08`, border: `1px solid ${C.teal}30`, borderRadius: RADIUS.sm, padding: "10px 12px" }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: C.teal, marginBottom: 10, display: "flex", alignItems: "center", gap: 5, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        <KeyRound size={10} /> Thông tin truy cập kênh
+      </div>
+      {data.email_access && <CredRow label="Email" value={data.email_access} />}
+      {data.password     && <CredRow label="Password" value={data.password} secret />}
+    </div>
+  );
+}
+
 // ── State config ──────────────────────────────────────────────
-const STATE_CFG: Record<WorkflowState, { label: string; color: "blue"|"amber"|"green"|"red"|"purple"|"gray"|"teal" }> = {
-  DRAFT:                { label: "Nháp",              color: "gray" },
-  SUBMITTED:            { label: "Chờ duyệt",         color: "blue" },
-  QC_REVIEWING:         { label: "Đang xem xét",      color: "amber" },
-  QC_REJECTED:          { label: "Từ chối",            color: "red" },
-  QC_APPROVED:          { label: "Đã duyệt",           color: "teal" },
-  CHANNEL_PROVISIONING: { label: "Đang cấp kênh",     color: "purple" },
-  PROVISIONING_FAILED:  { label: "Cấp kênh thất bại", color: "red" },
-  ACTIVE:               { label: "Hoạt động",          color: "green" },
+const STATE_CFG: Record<WorkflowState, { label: string; color: "blue"|"amber"|"green"|"red"|"purple"|"gray"|"teal"; icon: React.ReactNode }> = {
+  DRAFT:                { label: "Nháp",              color: "gray",   icon: <Clock size={11} /> },
+  SUBMITTED:            { label: "Chờ duyệt",         color: "blue",   icon: <Clock size={11} /> },
+  QC_REVIEWING:         { label: "Đang xem xét",      color: "amber",  icon: <Eye size={11} /> },
+  QC_REJECTED:          { label: "Từ chối",            color: "red",    icon: <XCircle size={11} /> },
+  QC_APPROVED:          { label: "Đã duyệt",           color: "teal",   icon: <CheckCircle size={11} /> },
+  CHANNEL_PROVISIONING: { label: "Đang cấp kênh",     color: "purple", icon: <RotateCcw size={11} /> },
+  PROVISIONING_FAILED:  { label: "Cấp kênh thất bại", color: "red",    icon: <XCircle size={11} /> },
+  ACTIVE:               { label: "Hoạt động",          color: "green",  icon: <CheckCircle size={11} /> },
 };
 
 // ── Timeline log ──────────────────────────────────────────────
@@ -31,20 +79,65 @@ function LogPanel({ id }: { id: string }) {
   if (isLoading) return <div style={{ padding: "12px 20px", color: C.textMuted, fontSize: 12 }}>Đang tải...</div>;
   if (!logs.length) return <div style={{ padding: "12px 20px", color: C.textMuted, fontSize: 12 }}>Chưa có lịch sử.</div>;
   return (
-    <div style={{ padding: "12px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
-      {logs.map((l) => {
-        const cfg = STATE_CFG[l.to_state as WorkflowState] ?? STATE_CFG.SUBMITTED;
+    <div style={{ padding: "12px 20px", display: "flex", flexDirection: "column" }}>
+      {logs.map((l, idx) => {
+        const cfg     = STATE_CFG[l.to_state as WorkflowState] ?? STATE_CFG.SUBMITTED;
+        const isLast  = idx === logs.length - 1;
         return (
-          <div key={l.id} style={{ display: "flex", gap: 10 }}>
-            <div style={{ width: 22, height: 22, borderRadius: "50%", background: `${C[cfg.color] ?? C.blue}25`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <div style={{ width: 7, height: 7, borderRadius: "50%", background: C[cfg.color] ?? C.blue }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.text }}>
-                {l.from_state ? `${STATE_CFG[l.from_state as WorkflowState]?.label ?? l.from_state} → ` : ""}{cfg.label}
+          <div key={l.id} style={{ display: "flex", gap: 12, paddingBottom: isLast ? 4 : 14, position: "relative" }}>
+            {/* Icon + connector line */}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+              <div style={{
+                width: 26, height: 26, borderRadius: "50%",
+                background: `${C[cfg.color] ?? C.blue}22`,
+                border: `1.5px solid ${C[cfg.color] ?? C.blue}50`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: C[cfg.color] ?? C.blue, zIndex: 1,
+              }}>
+                {cfg.icon}
               </div>
-              {l.note && <div style={{ fontSize: 11, color: C.amber, marginTop: 1 }}>{l.note}</div>}
-              <div style={{ fontSize: 10, color: C.textMuted }}>{l.by_email ?? "Hệ thống"} · {new Date(l.ts).toLocaleString("vi-VN")}</div>
+              {!isLast && <div style={{ flex: 1, width: 2, background: C.border, marginTop: 3 }} />}
+            </div>
+            {/* Content */}
+            <div style={{ paddingTop: 3, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                {l.from_state && (
+                  <>
+                    <span style={{ fontSize: 11, color: C.textMuted }}>{STATE_CFG[l.from_state as WorkflowState]?.label ?? l.from_state}</span>
+                    <ChevronRight size={9} color={C.textMuted} />
+                  </>
+                )}
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{cfg.label}</span>
+              </div>
+              {l.note && (
+                <div style={{
+                  fontSize: 11, marginTop: 4, padding: "5px 9px",
+                  borderRadius: RADIUS.sm, lineHeight: 1.5,
+                  background: l.to_state === "PROVISIONING_FAILED"
+                    ? `${C.red}12`
+                    : l.to_state === "ACTIVE"
+                    ? `${C.green}12`
+                    : l.to_state === "QC_APPROVED" || l.to_state === "QC_REJECTED"
+                    ? `${C.teal}12`
+                    : `${C.bgPage}cc`,
+                  borderLeft: `2px solid ${
+                    l.to_state === "PROVISIONING_FAILED" ? C.red
+                    : l.to_state === "ACTIVE" ? C.green
+                    : l.to_state === "QC_APPROVED" || l.to_state === "QC_REJECTED" ? C.teal
+                    : C.border
+                  }`,
+                  color: l.to_state === "PROVISIONING_FAILED" ? C.red
+                    : l.to_state === "ACTIVE" ? C.green
+                    : l.to_state === "QC_APPROVED" ? C.teal
+                    : C.textSub,
+                  fontWeight: 500,
+                }}>
+                  {l.note}
+                </div>
+              )}
+              <div style={{ fontSize: 10, color: C.textMuted, marginTop: 2 }}>
+                {l.by_email ?? "Hệ thống"} · {new Date(l.ts).toLocaleString("vi-VN")}
+              </div>
             </div>
           </div>
         );
@@ -165,13 +258,14 @@ function ProvisionPanel({ sub, onDone }: { sub: Submission; onDone: () => void }
   const [ytId,      setYtId]      = useState("");
   const [channelName, setChannelName] = useState(sub.channel_name ?? sub.video_title ?? "");
   const [cmsId,     setCmsId]     = useState("");
+  const [emailAccess, setEmailAccess] = useState("");
+  const [password,    setPassword]    = useState("");
   const [showForm,  setShowForm]  = useState(false);
 
   const handleProvision = async () => {
-    if (!ytId.trim()) { toast.warning("Thiếu thông tin", "Nhập YouTube Channel ID"); return; }
-    if (!cmsId)        { toast.warning("Thiếu thông tin", "Chọn CMS"); return; }
+    if (!cmsId) { toast.warning("Thiếu thông tin", "Chọn CMS"); return; }
     try {
-      const res = await provision.mutateAsync({ id: sub.id, channelData: { ytId: ytId.trim(), cmsId, name: channelName.trim() || ytId.trim() } });
+      const res = await provision.mutateAsync({ id: sub.id, channelData: { ytId: ytId.trim() || undefined, cmsId, name: channelName.trim() || sub.video_title, emailAccess: emailAccess || undefined, password: password || undefined } });
       toast.success("Cấp kênh thành công", res.channel.name);
       onDone();
     } catch (err) { toast.error("Lỗi cấp kênh", err instanceof Error ? err.message : ""); }
@@ -227,8 +321,8 @@ function ProvisionPanel({ sub, onDone }: { sub: Submission; onDone: () => void }
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
           <div>
-            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>YouTube Channel ID *</div>
-            <input value={ytId} onChange={(e) => setYtId(e.target.value)} placeholder="UCxxx..."
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>YouTube Channel ID <span style={{ color: C.textMuted, fontStyle: "italic" }}>(UC... — để trống nếu chưa có)</span></div>
+            <input value={ytId} onChange={(e) => setYtId(e.target.value)} placeholder="UCxxxxxxxxxxxxxxxxxxxx"
               style={{ width: "100%", padding: "7px 10px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
           </div>
           <div>
@@ -243,6 +337,16 @@ function ProvisionPanel({ sub, onDone }: { sub: Submission; onDone: () => void }
               <option value="">-- Chọn CMS --</option>
               {cmsList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>Truy cập mail</div>
+            <input value={emailAccess} onChange={(e) => setEmailAccess(e.target.value)} placeholder="email@gmail.com"
+              style={{ width: "100%", padding: "7px 10px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>Password</div>
+            <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mật khẩu ban đầu" autoComplete="off"
+              style={{ width: "100%", padding: "7px 10px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -331,6 +435,9 @@ function SubmissionCard({ sub }: { sub: Submission }) {
                   <div style={{ fontSize: 12, color: C.text }}>{sub.admin_note}</div>
                 </div>
               )}
+              {sub.workflow_state === "ACTIVE" && sub.channel_id && (
+                <ChannelCredBox channelId={sub.channel_id} />
+              )}
             </div>
             <div>
               <div style={{ padding: "12px 18px 4px", fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: "uppercase" }}>Lịch sử</div>
@@ -348,7 +455,7 @@ function SubmissionCard({ sub }: { sub: Submission }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────
-type TabKey = "all" | "provision" | "rejected" | "reviewing" | "pending";
+type TabKey = "all" | "provision" | "rejected" | "reviewing" | "pending" | "active";
 
 export default function QcQueuePage() {
   const [search, setSearch] = useState("");
@@ -362,6 +469,7 @@ export default function QcQueuePage() {
   const rejected     = items.filter((s) => s.workflow_state === "QC_REJECTED").length;
   const approved     = items.filter((s) => s.workflow_state === "QC_APPROVED").length;
   const provisioning = items.filter((s) => s.workflow_state === "CHANNEL_PROVISIONING" || s.workflow_state === "PROVISIONING_FAILED").length;
+  const active       = items.filter((s) => s.workflow_state === "ACTIVE").length;
 
   const tabItems: Record<TabKey, Submission[]> = {
     all:       items.filter((s) => s.workflow_state === "SUBMITTED" || s.workflow_state === "QC_REVIEWING"),
@@ -369,11 +477,13 @@ export default function QcQueuePage() {
     reviewing: items.filter((s) => s.workflow_state === "QC_REVIEWING"),
     rejected:  items.filter((s) => s.workflow_state === "QC_REJECTED"),
     provision: items.filter((s) => s.workflow_state === "QC_APPROVED" || s.workflow_state === "CHANNEL_PROVISIONING" || s.workflow_state === "PROVISIONING_FAILED"),
+    active:    items.filter((s) => s.workflow_state === "ACTIVE"),
   };
 
   const tabs: Array<{ key: TabKey; label: string; count: number; color: string }> = [
     { key: "all",       label: "Hàng chờ QC",  count: submitted + reviewing,  color: C.blue   },
     { key: "provision", label: "Cấp kênh",      count: approved + provisioning, color: C.teal   },
+    { key: "active",    label: "Hoạt động",     count: active,                 color: C.green  },
     { key: "rejected",  label: "Từ chối",       count: rejected,               color: C.red    },
     { key: "reviewing", label: "Đang xem xét",  count: reviewing,              color: C.amber  },
     { key: "pending",   label: "Chờ duyệt",     count: submitted,              color: C.purple },

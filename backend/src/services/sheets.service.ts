@@ -28,9 +28,9 @@ type ChannelExportRow = {
   created_at: Date;
 };
 
-function getAuth() {
-  const email = env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const rawKey = env.GOOGLE_PRIVATE_KEY;
+function getAuth(creds?: { email: string; privateKey: string }) {
+  const email  = creds?.email    ?? env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const rawKey = creds?.privateKey ?? env.GOOGLE_PRIVATE_KEY;
   if (!email || !rawKey) {
     throw new Error("GOOGLE_SERVICE_ACCOUNT_EMAIL / GOOGLE_PRIVATE_KEY chưa được cấu hình");
   }
@@ -79,11 +79,13 @@ function toRow(ch: ChannelExportRow): string[] {
   ];
 }
 
-export async function exportChannelsToSheet(): Promise<{ written: number }> {
-  const sheetId = env.GOOGLE_SHEET_ID;
+export async function exportChannelsToSheet(
+  creds?: { email: string; privateKey: string; sheetId: string }
+): Promise<{ written: number }> {
+  const sheetId = creds?.sheetId ?? env.GOOGLE_SHEET_ID;
   if (!sheetId) throw new Error("GOOGLE_SHEET_ID chưa được cấu hình");
 
-  const auth = getAuth();
+  const auth = getAuth(creds);
   const sheets = google.sheets({ version: "v4", auth });
 
   // Lấy tên tab đầu tiên của sheet (không hardcode "Sheet1")

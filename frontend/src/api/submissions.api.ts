@@ -119,7 +119,7 @@ export function useProvisionSubmission() {
   return useMutation({
     mutationFn: ({ id, channelData }: {
       id: string;
-      channelData: { ytId?: string; cmsId?: string; topicId?: string; name?: string; partnerId?: string };
+      channelData: { ytId?: string; cmsId?: string; topicId?: string; name?: string; partnerId?: string; emailAccess?: string; password?: string };
     }) =>
       apiClient
         .post(`submissions/${id}/provision`, { json: channelData })

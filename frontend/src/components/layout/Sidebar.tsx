@@ -8,6 +8,7 @@ import { useState, useMemo } from "react";
 import { C, FONT_MONO } from "@/styles/theme";
 import { useAuthStore } from "@/stores/authStore";
 import { getAllowedPaths } from "@/lib/permissions";
+import { useInboxUnreadCount } from "@/api/inbox.api";
 
 interface NavItem {
   label: string;
@@ -50,6 +51,8 @@ export function Sidebar() {
   const navigate = useNavigate();
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const user = useAuthStore((s) => s.user);
+  const { data: inboxCount } = useInboxUnreadCount();
+  const unread = inboxCount?.count ?? 0;
 
   // Lọc nav items theo role
   const visibleEntries = useMemo<NavEntry[]>(() => {
@@ -157,16 +160,35 @@ export function Sidebar() {
                 textDecoration: "none",
                 transition: "all 0.15s",
                 whiteSpace: "nowrap",
+                position: "relative",
               })}
             >
-              {entry.icon}
+              {/* Icon — dot badge khi collapsed */}
+              <span style={{ position: "relative", display: "flex", flexShrink: 0 }}>
+                {entry.icon}
+                {collapsed && entry.path === "/inbox" && unread > 0 && (
+                  <span style={{
+                    position: "absolute", top: -4, right: -5,
+                    width: 8, height: 8, borderRadius: "50%",
+                    background: C.red, border: `1.5px solid ${C.bgCard}`,
+                  }} />
+                )}
+              </span>
+
               {!collapsed && entry.labelVi}
-              {!collapsed && entry.badge ? (
+
+              {/* Badge số khi mở rộng */}
+              {!collapsed && entry.path === "/inbox" && unread > 0 && (
                 <span style={{
-                  marginLeft: "auto", background: C.red, color: "#fff",
-                  borderRadius: "9999px", fontSize: 10, padding: "1px 6px", fontWeight: 700,
-                }}>{entry.badge}</span>
-              ) : null}
+                  marginLeft: "auto",
+                  background: C.red, color: "#fff",
+                  borderRadius: "9999px", fontSize: 10,
+                  padding: "1px 6px", fontWeight: 700,
+                  lineHeight: "16px", minWidth: 18, textAlign: "center",
+                }}>
+                  {unread > 99 ? "99+" : unread}
+                </span>
+              )}
             </NavLink>
           );
         })}

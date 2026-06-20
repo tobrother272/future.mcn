@@ -193,6 +193,15 @@ export function useBulkEditChannels() {
   });
 }
 
+export function useChannelCredentials(channelId: string) {
+  return useQuery({
+    queryKey: ["channels", channelId, "credentials"],
+    queryFn: () => apiClient.get(`channels/${channelId}/credentials`).json<{ email_access: string | null; password: string | null }>(),
+    enabled: !!channelId,
+    retry: false,
+  });
+}
+
 export function useContentOwners() {
   return useQuery({
     queryKey: ["channels", "content-owners"],

@@ -2,6 +2,7 @@
 import {
   UploadCloud, Plus, Search, RefreshCw, ChevronRight, ChevronDown,
   Clock, CheckCircle, XCircle, Loader2, Tv2, FileVideo, AlertCircle, Trash2,
+  Eye, EyeOff, KeyRound, Copy, Check,
 } from "lucide-react";
 import { C, RADIUS, SHADOW } from "@/styles/theme";
 import { Button, Pill } from "@/components/ui";
@@ -10,6 +11,7 @@ import {
   useSubmissionList, useCreateSubmission, useSubmissionLog, useDeleteSubmission,
   type Submission, type WorkflowState,
 } from "@/api/submissions.api";
+import { useChannelCredentials } from "@/api/channels.api";
 import { useToast } from "@/stores/notificationStore";
 import { useTopics } from "@/api/cms.api";
 
@@ -38,6 +40,10 @@ function TimelineRow({ from, to, byEmail, note, ts }: {
   from: string | null; to: string; byEmail: string | null; note: string | null; ts: string;
 }) {
   const cfg = STATE_CFG[to as WorkflowState] ?? STATE_CFG.DRAFT;
+  // Ẩn lỗi kỹ thuật khi cấp kênh thất bại — hiện thông báo thân thiện
+  const displayNote = to === "PROVISIONING_FAILED"
+    ? "Quá trình cấp kênh gặp sự cố. Vui lòng liên hệ quản trị viên để được hỗ trợ."
+    : note;
   return (
     <div style={{ display: "flex", gap: 14, paddingBottom: 16, position: "relative" }}>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
@@ -52,7 +58,32 @@ function TimelineRow({ from, to, byEmail, note, ts }: {
           {from && <ChevronRight size={10} color={C.textMuted} />}
           <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{cfg.label}</span>
         </div>
-        {note && <div style={{ fontSize: 11, color: C.textSub, marginTop: 3 }}>{note}</div>}
+        {displayNote && (
+          <div style={{
+            fontSize: 11, marginTop: 4, padding: "5px 9px",
+            borderRadius: RADIUS.sm, lineHeight: 1.5,
+            background: to === "PROVISIONING_FAILED"
+              ? `${C.amber}15`
+              : to === "ACTIVE"
+              ? `${C.green}12`
+              : to === "QC_APPROVED" || to === "QC_REJECTED"
+              ? `${C.teal}12`
+              : `${C.bgPage}cc`,
+            borderLeft: `2px solid ${
+              to === "PROVISIONING_FAILED" ? C.amber
+              : to === "ACTIVE" ? C.green
+              : to === "QC_APPROVED" || to === "QC_REJECTED" ? C.teal
+              : C.border
+            }`,
+            color: to === "PROVISIONING_FAILED" ? C.amber
+              : to === "ACTIVE" ? C.green
+              : to === "QC_APPROVED" ? C.teal
+              : C.textSub,
+            fontWeight: 500,
+          }}>
+            {displayNote}
+          </div>
+        )}
         <div style={{ fontSize: 10, color: C.textMuted, marginTop: 3 }}>
           {byEmail ?? "Hệ thống"} · {new Date(ts).toLocaleString("vi-VN")}
         </div>
@@ -71,6 +102,116 @@ function SubmissionLogPanel({ id }: { id: string }) {
       {logs.map((log) => (
         <TimelineRow key={log.id} from={log.from_state} to={log.to_state} byEmail={log.by_email} note={log.note} ts={log.ts} />
       ))}
+    </div>
+  );
+}
+
+// ── Channel credentials box (for partner after provisioning) ──
+function CredRow({ label, value, secret }: { label: string; value: string; secret?: boolean }) {
+  const [show, setShow]     = useState(!secret);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    void navigator.clipboard.writeText(value).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    });
+  };
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 8 }}>
+      <span style={{
+        fontSize: 11, color: C.textMuted, width: 72, flexShrink: 0,
+        fontWeight: 500, letterSpacing: "0.02em",
+      }}>
+        {label}
+      </span>
+      <div style={{
+        flex: 1, display: "flex", alignItems: "center",
+        background: `${C.bgPage}e0`, border: `1px solid ${C.border}`,
+        borderRadius: RADIUS.sm, overflow: "hidden",
+      }}>
+        <span style={{
+          flex: 1, padding: "6px 10px",
+          fontSize: 12, color: C.text, fontFamily: "monospace",
+          letterSpacing: secret && !show ? "4px" : "normal",
+          userSelect: show || !secret ? "text" : "none",
+        }}>
+          {secret && !show ? "••••••••••••" : value}
+        </span>
+        {secret && (
+          <button
+            onClick={() => setShow(v => !v)}
+            title={show ? "Ẩn" : "Hiện"}
+            style={{
+              background: "transparent", border: "none", borderLeft: `1px solid ${C.border}`,
+              cursor: "pointer", padding: "6px 8px", color: C.textMuted,
+              display: "flex", alignItems: "center", transition: "background .12s",
+            }}
+            onMouseEnter={e => ((e.currentTarget as HTMLElement).style.background = `${C.border}80`)}
+            onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = "transparent")}
+          >
+            {show ? <EyeOff size={13} /> : <Eye size={13} />}
+          </button>
+        )}
+        <button
+          onClick={handleCopy}
+          title="Sao chép"
+          style={{
+            background: copied ? `${C.teal}18` : "transparent",
+            border: "none", borderLeft: `1px solid ${C.border}`,
+            cursor: "pointer", padding: "6px 8px",
+            color: copied ? C.teal : C.textMuted,
+            display: "flex", alignItems: "center", transition: "background .12s, color .12s",
+          }}
+          onMouseEnter={e => { if (!copied) (e.currentTarget as HTMLElement).style.background = `${C.border}80`; }}
+          onMouseLeave={e => { if (!copied) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ChannelCredentialsBox({ channelId }: { channelId: string }) {
+  const { data, isLoading, isError } = useChannelCredentials(channelId);
+
+  if (isLoading) return (
+    <div style={{ marginTop: 12, fontSize: 12, color: C.textMuted, display: "flex", alignItems: "center", gap: 6 }}>
+      <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Đang tải thông tin truy cập...
+    </div>
+  );
+  if (isError || (!data?.email_access && !data?.password)) return null;
+
+  return (
+    <div style={{
+      marginTop: 14,
+      background: `${C.teal}08`,
+      border: `1px solid ${C.teal}30`,
+      borderRadius: RADIUS.md,
+      padding: "12px 14px",
+    }}>
+      <div style={{
+        fontSize: 11, fontWeight: 600, color: C.teal,
+        marginBottom: 12, display: "flex", alignItems: "center", gap: 5,
+        textTransform: "uppercase", letterSpacing: "0.05em",
+      }}>
+        <KeyRound size={11} /> Thông tin truy cập kênh
+      </div>
+
+      {data.email_access && <CredRow label="Email" value={data.email_access} />}
+      {data.password     && <CredRow label="Password" value={data.password} secret />}
+
+      <div style={{
+        fontSize: 10.5, color: C.amber, marginTop: 10,
+        padding: "6px 10px",
+        background: `${C.amber}12`, borderRadius: RADIUS.sm,
+        borderLeft: `2px solid ${C.amber}`,
+        lineHeight: 1.5,
+      }}>
+        Đây là thông tin truy cập ban đầu. Vui lòng <strong>đổi mật khẩu</strong> và bật xác thực 2 bước sau khi đăng nhập lần đầu.
+      </div>
     </div>
   );
 }
@@ -171,6 +312,9 @@ function SubmissionRow({ sub, onDelete }: { sub: Submission; onDelete: (id: stri
                   <div style={{ fontSize: 10, color: C.amber, fontWeight: 600, marginBottom: 3 }}>GHI CHÚ TỪ QC</div>
                   <div style={{ fontSize: 12, color: C.text }}>{sub.admin_note}</div>
                 </div>
+              )}
+              {sub.workflow_state === "ACTIVE" && sub.channel_id && (
+                <ChannelCredentialsBox channelId={sub.channel_id} />
               )}
             </div>
             {/* Workflow log */}
