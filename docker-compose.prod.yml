@@ -66,6 +66,7 @@ services:
       CORS_ORIGINS:        ${CORS_ORIGINS}
       LOG_LEVEL:           ${LOG_LEVEL:-info}
       MERIDIAN_API_TOKEN:  ${MERIDIAN_API_TOKEN}
+      CHANNEL_CRED_SECRET: ${CHANNEL_CRED_SECRET}
     # Loopback-only; clients go through Caddy → frontend → here.
     ports:
       - "127.0.0.1:4010:4000"
