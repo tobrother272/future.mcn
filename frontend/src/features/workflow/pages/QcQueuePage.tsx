@@ -13,7 +13,7 @@ import {
   type Submission, type WorkflowState,
 } from "@/api/submissions.api";
 import { useCmsList } from "@/api/cms.api";
-import { useChannelCredentials } from "@/api/channels.api";
+import { useChannelCredentials, useUpdateChannelCredentials } from "@/api/channels.api";
 import { useToast } from "@/stores/notificationStore";
 
 // ── Channel credentials (admin view) ─────────────────────────
@@ -28,7 +28,7 @@ function CredRow({ label, value, secret }: { label: string; value: string; secre
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 8 }}>
       <span style={{ fontSize: 11, color: C.textMuted, width: 72, flexShrink: 0, fontWeight: 500 }}>{label}</span>
-      <div style={{ flex: 1, display: "flex", alignItems: "center", background: `${C.bgPage}e0`, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", background: `${C.bgCard}e0`, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, overflow: "hidden" }}>
         <span style={{ flex: 1, padding: "5px 10px", fontSize: 12, color: C.text, fontFamily: "monospace", letterSpacing: secret && !show ? "4px" : "normal" }}>
           {secret && !show ? "••••••••••••" : value}
         </span>
@@ -49,15 +49,80 @@ function CredRow({ label, value, secret }: { label: string; value: string; secre
 
 function ChannelCredBox({ channelId }: { channelId: string }) {
   const { data, isLoading, isError } = useChannelCredentials(channelId);
+  const update = useUpdateChannelCredentials(channelId);
+  const toast  = useToast();
+
+  const [editing,  setEditing]  = useState(false);
+  const [showPwd,  setShowPwd]  = useState(false);
+  const [emailVal, setEmailVal] = useState("");
+  const [pwdVal,   setPwdVal]   = useState("");
+
+  const startEdit = () => {
+    setEmailVal(data?.email_access ?? "");
+    setPwdVal("");
+    setShowPwd(false);
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    try {
+      await update.mutateAsync({ email_access: emailVal, password: pwdVal || undefined });
+      toast.success("Đã lưu", "Thông tin truy cập đã cập nhật");
+      setEditing(false);
+    } catch { toast.error("Lỗi", "Không lưu được thông tin truy cập"); }
+  };
+
   if (isLoading) return <div style={{ fontSize: 11, color: C.textMuted }}>Đang tải...</div>;
-  if (isError || (!data?.email_access && !data?.password)) return null;
+  if (isError) return null;
+
   return (
     <div style={{ marginTop: 12, background: `${C.teal}08`, border: `1px solid ${C.teal}30`, borderRadius: RADIUS.sm, padding: "10px 12px" }}>
-      <div style={{ fontSize: 10, fontWeight: 700, color: C.teal, marginBottom: 10, display: "flex", alignItems: "center", gap: 5, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-        <KeyRound size={10} /> Thông tin truy cập kênh
+      <div style={{ fontSize: 10, fontWeight: 700, color: C.teal, marginBottom: editing ? 10 : 0, display: "flex", alignItems: "center", justifyContent: "space-between", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}><KeyRound size={10} /> Thông tin truy cập kênh</span>
+        {!editing && (
+          <button onClick={startEdit} style={{ fontSize: 10, color: C.teal, background: `${C.teal}18`, border: `1px solid ${C.teal}35`, borderRadius: 4, padding: "2px 8px", cursor: "pointer", fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>
+            {data?.email_access || data?.password ? "Sửa" : "+ Thêm"}
+          </button>
+        )}
       </div>
-      {data.email_access && <CredRow label="Email" value={data.email_access} />}
-      {data.password     && <CredRow label="Password" value={data.password} secret />}
+
+      {!editing && (
+        <div style={{ marginTop: (data?.email_access || data?.password) ? 10 : 0 }}>
+          {data?.email_access && <CredRow label="Email"    value={data.email_access} />}
+          {data?.password     && <CredRow label="Password" value={data.password} secret />}
+          {!data?.email_access && !data?.password && (
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>Chưa có thông tin truy cập</div>
+          )}
+        </div>
+      )}
+
+      {editing && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: C.textMuted, width: 60, flexShrink: 0 }}>Email</span>
+            <input value={emailVal} onChange={e => setEmailVal(e.target.value)} placeholder="email@example.com"
+              style={{ flex: 1, padding: "5px 8px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 12, outline: "none" }} />
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: C.textMuted, width: 60, flexShrink: 0 }}>Password</span>
+            <div style={{ flex: 1, position: "relative" }}>
+              <input type={showPwd ? "text" : "password"} value={pwdVal} onChange={e => setPwdVal(e.target.value)}
+                placeholder={data?.password ? "Để trống = giữ nguyên" : "Nhập password mới"}
+                style={{ width: "100%", padding: "5px 28px 5px 8px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.text, fontSize: 12, outline: "none", boxSizing: "border-box" }} />
+              <button onClick={() => setShowPwd(v => !v)} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.textMuted, display: "flex" }}>
+                {showPwd ? <EyeOff size={12} /> : <Eye size={12} />}
+              </button>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 2 }}>
+            <button onClick={() => setEditing(false)} style={{ padding: "4px 10px", background: "transparent", border: `1px solid ${C.border}`, borderRadius: RADIUS.sm, color: C.textMuted, fontSize: 11, cursor: "pointer" }}>Hủy</button>
+            <button onClick={() => void handleSave()} disabled={update.isPending}
+              style={{ padding: "4px 12px", background: C.teal, border: "none", borderRadius: RADIUS.sm, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", opacity: update.isPending ? 0.6 : 1 }}>
+              {update.isPending ? "Đang lưu..." : "Lưu"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -90,10 +155,10 @@ function LogPanel({ id }: { id: string }) {
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
               <div style={{
                 width: 26, height: 26, borderRadius: "50%",
-                background: `${C[cfg.color] ?? C.blue}22`,
-                border: `1.5px solid ${C[cfg.color] ?? C.blue}50`,
+                background: `${(C as Record<string,string>)[cfg.color] ?? C.blue}22`,
+                border: `1.5px solid ${(C as Record<string,string>)[cfg.color] ?? C.blue}50`,
                 display: "flex", alignItems: "center", justifyContent: "center",
-                color: C[cfg.color] ?? C.blue, zIndex: 1,
+                color: (C as Record<string,string>)[cfg.color] ?? C.blue, zIndex: 1,
               }}>
                 {cfg.icon}
               </div>
@@ -120,7 +185,7 @@ function LogPanel({ id }: { id: string }) {
                     ? `${C.green}12`
                     : l.to_state === "QC_APPROVED" || l.to_state === "QC_REJECTED"
                     ? `${C.teal}12`
-                    : `${C.bgPage}cc`,
+                    : `${C.bgCard}cc`,
                   borderLeft: `2px solid ${
                     l.to_state === "PROVISIONING_FAILED" ? C.red
                     : l.to_state === "ACTIVE" ? C.green
