@@ -126,16 +126,7 @@ export const WorkflowService = {
         partnerId = acc?.partner_id ?? undefined;
       }
 
-      // Encrypt password if provided
-      let passwordEnc: string | undefined;
-      if (channelData.password) {
-        const secret = process.env.CHANNEL_CRED_SECRET;
-        if (secret && secret.length === 64) {
-          const { encryptCredential } = await import("../lib/crypto.js");
-          passwordEnc = encryptCredential(channelData.password);
-        }
-      }
-
+      // Store password as plaintext (access requires login; recipient will change it)
       const channel = await ChannelService.create({
         cms_id:       channelData.cmsId,
         partner_id:   partnerId,
@@ -145,7 +136,7 @@ export const WorkflowService = {
         status:       "Active",
         monetization: "Off",
         email_access: channelData.emailAccess,
-        password_enc: passwordEnc,
+        password_enc: channelData.password ?? undefined,
       });
       await query(
         `UPDATE submission SET channel_id=$1 WHERE id=$2`, [channel.id, submissionId]

@@ -209,16 +209,28 @@ router.get("/:id/credentials", async (req, res, next) => {
   try {
     await assertChannelAccessible(req, req.params.id!);
     const ch = await ChannelService.getById(req.params.id!) as unknown as Record<string, unknown>;
-    const email = (ch.email_access as string | null) ?? null;
-    const enc   = (ch.password_enc as string | null) ?? null;
-    let password: string | null = null;
-    if (enc) {
-      try {
-        const { decryptCredential } = await import("../lib/crypto.js");
-        password = decryptCredential(enc);
-      } catch { password = null; }
+    res.json({
+      email_access: (ch.email_access as string | null) ?? null,
+      password:     (ch.password_enc as string | null) ?? null,
+    });
+  } catch(e) { next(e); }
+});
+
+router.patch("/:id/credentials", async (req, res, next) => {
+  try {
+    if (!req.user || !["EMPLOYEE", "ADMIN", "SUPER_ADMIN"].includes(req.user.role)) {
+      throw new ForbiddenError("Chỉ nhân viên mới được cập nhật credentials");
     }
-    res.json({ email_access: email, password });
+    const { email_access, password } = req.body as { email_access?: string; password?: string };
+    const { queryOne: qOne } = await import("../db/helpers.js");
+    await qOne(
+      `UPDATE channel SET
+         email_access = CASE WHEN $2::text IS NOT NULL THEN $2 ELSE email_access END,
+         password_enc = CASE WHEN $3 THEN $4 ELSE password_enc END
+       WHERE id = $1`,
+      [req.params.id, email_access ?? null, typeof password === "string", password ?? null]
+    );
+    res.json({ ok: true });
   } catch(e) { next(e); }
 });
 
