@@ -1,4 +1,5 @@
 ﻿import { useState, useMemo } from "react";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   UploadCloud, Plus, Search, RefreshCw, ChevronRight, ChevronDown,
   Clock, CheckCircle, XCircle, Loader2, Tv2, FileVideo, AlertCircle, Trash2,
@@ -112,7 +113,7 @@ function CredRow({ label, value, secret }: { label: string; value: string; secre
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(value).then(() => {
+    void copyToClipboard(value).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     });
