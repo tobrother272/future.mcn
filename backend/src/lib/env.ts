@@ -14,6 +14,7 @@ const envSchema = z.object({
   GOOGLE_SERVICE_ACCOUNT_EMAIL: z.string().optional(),
   GOOGLE_PRIVATE_KEY:           z.string().optional(),
   GOOGLE_SHEET_ID:              z.string().optional(),
+  CHANNEL_CRED_SECRET:          z.string().optional(), // for migrating legacy encrypted passwords
 });
 
 const parsed = envSchema.safeParse(process.env);

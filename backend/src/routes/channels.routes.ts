@@ -209,10 +209,24 @@ router.get("/:id/credentials", async (req, res, next) => {
   try {
     await assertChannelAccessible(req, req.params.id!);
     const ch = await ChannelService.getById(req.params.id!) as unknown as Record<string, unknown>;
-    res.json({
-      email_access: (ch.email_access as string | null) ?? null,
-      password:     (ch.password_enc as string | null) ?? null,
-    });
+    const email   = (ch.email_access as string | null) ?? null;
+    let password  = (ch.password_enc as string | null) ?? null;
+
+    // Migrate legacy AES-GCM ciphertext → plaintext on first read
+    if (password) {
+      const { isLegacyCiphertext, tryDecryptLegacy } = await import("../lib/crypto.js");
+      if (isLegacyCiphertext(password)) {
+        const plain = tryDecryptLegacy(password);
+        if (plain) {
+          password = plain;
+          // Write plaintext back to DB so next read is instant
+          const { queryOne: q } = await import("../db/helpers.js");
+          await q(`UPDATE channel SET password_enc=$1 WHERE id=$2`, [plain, req.params.id]);
+        }
+      }
+    }
+
+    res.json({ email_access: email, password });
   } catch(e) { next(e); }
 });
 
