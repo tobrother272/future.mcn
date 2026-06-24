@@ -202,6 +202,15 @@ export function useChannelCredentials(channelId: string) {
   });
 }
 
+export function useUpdateChannelCredentials(channelId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { email_access?: string; password?: string }) =>
+      apiClient.patch(`channels/${channelId}/credentials`, { json: data }).json<{ ok: boolean }>(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["channels", channelId, "credentials"] }),
+  });
+}
+
 export function useContentOwners() {
   return useQuery({
     queryKey: ["channels", "content-owners"],

@@ -7,7 +7,7 @@ import {
 } from "recharts";
 import { C } from "@/styles/theme";
 import { Button, Card, Pill, StatusDot, Modal, EmptyState } from "@/components/ui";
-import { useChannel, useChannelVideos, useImportChannelVideos, useChannelAnalytics, useChannelCredentials } from "@/api/channels.api";
+import { useChannel, useChannelVideos, useImportChannelVideos, useChannelAnalytics, useChannelCredentials, useUpdateChannelCredentials } from "@/api/channels.api";
 import { useAuthStore } from "@/stores/authStore";
 import { useToast } from "@/stores/notificationStore";
 import { fmt, fmtCurrency, fmtDate } from "@/lib/format";
@@ -211,6 +211,111 @@ function ImportVideoModal({ open, onClose, channelId }: { open: boolean; onClose
   );
 }
 
+// ── Credentials Box (employee only) ──────────────────────────
+function CredentialsBox({ channelId }: { channelId: string }) {
+  const { data: creds, isLoading } = useChannelCredentials(channelId);
+  const update = useUpdateChannelCredentials(channelId);
+  const toast  = useToast();
+
+  const [editing, setEditing]     = useState(false);
+  const [showPwd, setShowPwd]     = useState(false);
+  const [emailVal, setEmailVal]   = useState("");
+  const [pwdVal, setPwdVal]       = useState("");
+
+  const startEdit = () => {
+    setEmailVal(creds?.email_access ?? "");
+    setPwdVal("");
+    setShowPwd(false);
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    try {
+      await update.mutateAsync({ email_access: emailVal, password: pwdVal || undefined });
+      toast.success("Đã lưu", "Thông tin truy cập đã cập nhật");
+      setEditing(false);
+    } catch { toast.error("Lỗi", "Không lưu được thông tin truy cập"); }
+  };
+
+  if (isLoading) return null;
+
+  return (
+    <div style={{
+      background: `${C.amber}0d`, border: `1px solid ${C.amber}30`, borderRadius: 10,
+      padding: "12px 16px", marginBottom: 20,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: editing ? 12 : 0 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, textTransform: "uppercase" }}>Thông tin truy cập kênh</span>
+        {!editing && (
+          <button onClick={startEdit} style={{ fontSize: 11, color: C.amber, background: `${C.amber}20`, border: `1px solid ${C.amber}40`, borderRadius: 6, padding: "3px 10px", cursor: "pointer" }}>
+            {creds?.email_access || creds?.password ? "Chỉnh sửa" : "+ Thêm"}
+          </button>
+        )}
+      </div>
+
+      {!editing && (
+        <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap", marginTop: (creds?.email_access || creds?.password) ? 8 : 0 }}>
+          {creds?.email_access && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 11, color: C.textMuted }}>Mail:</span>
+              <span style={{ fontSize: 12, color: C.text, fontFamily: "monospace" }}>{creds.email_access}</span>
+            </div>
+          )}
+          {creds?.password && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 11, color: C.textMuted }}>Password:</span>
+              <span style={{ fontSize: 12, color: C.text, fontFamily: "monospace", letterSpacing: showPwd ? 0 : 2 }}>
+                {showPwd ? creds.password : "•".repeat(Math.min(creds.password.length, 12))}
+              </span>
+              <button onClick={() => setShowPwd(v => !v)} style={{ background: "none", border: "none", cursor: "pointer", padding: 2, color: C.textMuted, display: "flex" }}>
+                {showPwd ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
+            </div>
+          )}
+          {!creds?.email_access && !creds?.password && (
+            <span style={{ fontSize: 11, color: C.textMuted }}>Chưa có thông tin truy cập</span>
+          )}
+        </div>
+      )}
+
+      {editing && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: C.textMuted, width: 60 }}>Email</span>
+            <input
+              value={emailVal} onChange={e => setEmailVal(e.target.value)}
+              placeholder="email@example.com"
+              style={{ flex: 1, padding: "5px 8px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, fontSize: 12, outline: "none" }}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: C.textMuted, width: 60 }}>Password</span>
+            <div style={{ flex: 1, position: "relative" }}>
+              <input
+                type={showPwd ? "text" : "password"}
+                value={pwdVal} onChange={e => setPwdVal(e.target.value)}
+                placeholder={creds?.password ? "Để trống = giữ nguyên" : "Nhập password mới"}
+                style={{ width: "100%", padding: "5px 28px 5px 8px", background: C.bgInput, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, fontSize: 12, outline: "none", boxSizing: "border-box" }}
+              />
+              <button onClick={() => setShowPwd(v => !v)} style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.textMuted, display: "flex" }}>
+                {showPwd ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+            <button onClick={() => setEditing(false)} style={{ padding: "5px 12px", background: "transparent", border: `1px solid ${C.border}`, borderRadius: 6, color: C.textMuted, fontSize: 12, cursor: "pointer" }}>
+              Hủy
+            </button>
+            <button onClick={() => void handleSave()} disabled={update.isPending} style={{ padding: "5px 14px", background: C.amber, border: "none", borderRadius: 6, color: "#000", fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: update.isPending ? 0.6 : 1 }}>
+              {update.isPending ? "Đang lưu..." : "Lưu"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────
 export default function ChannelDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -236,9 +341,6 @@ export default function ChannelDetailPage() {
   });
   const user = useAuthStore((s) => s.user);
   const isEmployee = user?.userType === "employee";
-  const { data: creds } = useChannelCredentials(isEmployee ? (id ?? "") : "");
-  const [showPassword, setShowPassword] = useState(false);
-
   if (isLoading) return <div style={{ padding: 24, color: C.textSub }}>Đang tải...</div>;
   if (!ch) return <div style={{ padding: 24, color: C.red }}>Kênh không tồn tại</div>;
 
@@ -360,34 +462,8 @@ export default function ChannelDetailPage() {
       </div>
 
       {/* Credentials (employee only) */}
-      {isEmployee && (creds?.email_access || creds?.password) && (
-        <div style={{
-          background: `${C.amber}0d`, border: `1px solid ${C.amber}30`, borderRadius: 10,
-          padding: "12px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap",
-        }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, textTransform: "uppercase", flexShrink: 0 }}>Thông tin truy cập</span>
-          {creds.email_access && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 11, color: C.textMuted }}>Mail:</span>
-              <span style={{ fontSize: 12, color: C.text, fontFamily: "monospace" }}>{creds.email_access}</span>
-            </div>
-          )}
-          {creds.password && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 11, color: C.textMuted }}>Password:</span>
-              <span style={{ fontSize: 12, color: C.text, fontFamily: "monospace", letterSpacing: showPassword ? 0 : 2 }}>
-                {showPassword ? creds.password : "•".repeat(Math.min(creds.password.length, 12))}
-              </span>
-              <button
-                onClick={() => setShowPassword((v) => !v)}
-                style={{ background: "none", border: "none", cursor: "pointer", padding: 2, color: C.textMuted, display: "flex" }}
-              >
-                {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
-              </button>
-            </div>
-          )}
-          <span style={{ fontSize: 10, color: C.textMuted, marginLeft: "auto" }}>Đối tác sẽ tự đổi sau khi nhận kênh</span>
-        </div>
+      {isEmployee && (
+        <CredentialsBox channelId={id ?? ""} />
       )}
 
       {/* Analytics Chart + Table */}
